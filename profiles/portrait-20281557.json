@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_id": "portrait-20281557-static-only",
+  "title": "Castlevania: Portrait of Ruin",
+  "steam_app_id": 2369900,
+  "steam_build_id": 20281557,
+  "module": "game.exe",
+  "sha256": "E6FA885F560C8A47640FF8DF4DE3CE4A938C8053EB11A90A7B65F5EBF1AB6B64",
+  "machine": "AMD64",
+  "required_imports": ["d3d11.dll", "dinput8.dll", "xinput1_4.dll"],
+  "runtime_hooks_enabled": false,
+  "runtime_status": "unvalidated_disabled",
+  "runtime_validation": {
+    "pause": false,
+    "semantic_surface_identification": false,
+    "normalized_input": false,
+    "safe_context_detection": false,
+    "thread_affinity": false,
+    "touch_coordinates": false
+  },
+  "reference_only_candidates": {
+    "EmuTaskBase.setPause": "0x16D40",
+    "EmuTaskBase.getPause": "0x16E40",
+    "EmuTask.DrawGpuScreen": "0x27010",
+    "updateEmuScreen_registration": "0x142CA",
+    "layout_muti_reference": "0x81A0E"
+  },
+  "candidate_warning": "Reference RVAs are not callable runtime bindings. Do not call, patch or dereference them without future instrumented validation.",
+  "signature_source": {
+    "project": "nuggslet/MGSM2Fix",
+    "commit": "8739522145bdf790b5e1029ada57d629c5be1a71",
+    "file": "src/modules/sqhook.cpp",
+    "url": "https://github.com/nuggslet/MGSM2Fix/blob/8739522145bdf790b5e1029ada57d629c5be1a71/src/modules/sqhook.cpp",
+    "license": "MIT",
+    "reuse_scope": "Signature bytes and offsets attributed for static identification; no hook implementation copied."
+  },
+  "signatures": [
+    {
+      "name": "CreateVM",
+      "pattern": "48 C7 81 FC 00 00 00 FF FF FF FF 48 89 B1 E0 00",
+      "function_offset": "-0xB3",
+      "expected_function_rva": "0xF1D70"
+    },
+    {
+      "name": "CallNative",
+      "pattern": "FF 53 68 FF 8F F0 00 00 00 48 8B 8C 24 F8 00 00",
+      "function_offset": "-0x2D0",
+      "expected_function_rva": "0xF83A0"
+    },
+    {
+      "name": "BindFunc",
+      "pattern": "44 0F B6 44 24 78 BA FD FF FF FF 49 8B 4E 08 E8",
+      "function_offset": "-0x25A",
+      "expected_function_rva": "0x4480"
+    }
+  ],
+  "other_titles": {
+    "Dawn of Sorrow": "pending; no validated runtime profile",
+    "Order of Ecclesia": "pending; no validated runtime profile"
+  }
+}

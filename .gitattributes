@@ -1,0 +1,3 @@
+# Preserve audited source bytes; Windows batch launchers require CRLF.
+* -text
+*.bat text eol=crlf
