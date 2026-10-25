@@ -1404,6 +1404,168 @@ void portrait_gate_keeps_input_out_of_foreign_pauses() {
     CHECK(!gate.update({lost, true, false, true}).input);
 }
 
+PortraitStateFields scene_fields(std::uint8_t mode, std::uint8_t state = 2, std::uint8_t type = 0,
+                                 std::uint8_t page = 0, std::uint8_t requested = 0) {
+    PortraitStateFields fields{};
+    fields.mode = mode;
+    fields.gameState = state;
+    fields.gameType = type;
+    fields.page = page;
+    fields.requestedPage = requested;
+    return fields;
+}
+
+void portrait_scene_separates_title_menus_and_gameplay() {
+    // Unreadable or inconsistent fields are unknown, whatever they hold.
+    auto verdict = classify_portrait_scene(scene_fields(2), false);
+    CHECK(verdict.scene == GameScene::Unknown && !verdict.gameplay && !verdict.mapReady);
+    // Before the Konami screen asks for page 6 the page is still 0: the mode decides.
+    verdict = classify_portrait_scene(scene_fields(0x1c, 0, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Boot && !verdict.gameplay && !verdict.mapReady);
+    verdict = classify_portrait_scene(scene_fields(0x0b, 0, 0, 6, 5), true);
+    CHECK(verdict.scene == GameScene::Boot && !verdict.gameplay);
+    // Title screen (the reported case: page 6, the graveyard image).
+    verdict = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    CHECK(verdict.scene == GameScene::Title && !verdict.gameplay && !verdict.mapReady);
+    // Even a stale map page outside gameplay is not a map.
+    verdict = classify_portrait_scene(scene_fields(5, 2, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Title && !verdict.mapReady);
+    for (const std::uint8_t mode : {0x12, 0x13, 0x16, 0x1a, 0x1b})
+        CHECK(classify_portrait_scene(scene_fields(mode, 2, 0, 4, 4), true).scene == GameScene::StartMenu);
+    for (const std::uint8_t mode : {0x00, 0x01, 0x14, 0x15})
+        CHECK(classify_portrait_scene(scene_fields(mode), true).scene == GameScene::Loading);
+    for (const std::uint8_t mode : {0x07, 0x08, 0x09}) {
+        verdict = classify_portrait_scene(scene_fields(mode, 2, 0, 0, 0), true);
+        CHECK(verdict.scene == GameScene::InGameMenu && !verdict.gameplay && !verdict.mapReady);
+    }
+    for (const std::uint8_t mode : {0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x17})
+        CHECK(classify_portrait_scene(scene_fields(mode, 2, 0, 0, 0), true).scene == GameScene::Sequence);
+    for (unsigned mode = 0x1d; mode <= 0xff; ++mode) {
+        verdict = classify_portrait_scene(scene_fields(static_cast<std::uint8_t>(mode), 2, 0, 0, 0), true);
+        CHECK(verdict.scene == GameScene::Unknown && !verdict.gameplay && !verdict.mapReady);
+    }
+    // Gameplay with the map or Status page shown: map ready.
+    verdict = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Gameplay && verdict.gameplay && verdict.mapReady);
+    CHECK(classify_portrait_scene(scene_fields(2, 2, 0, 1, 1), true).mapReady);
+    // Gameplay without a map yet: fade-in, death, switching or another page.
+    for (const std::uint8_t state : {0, 1, 3}) {
+        verdict = classify_portrait_scene(scene_fields(2, state, 0, 0, 0), true);
+        CHECK(verdict.gameplay && !verdict.mapReady);
+    }
+    CHECK(!classify_portrait_scene(scene_fields(2, 2, 0, 0, 1), true).mapReady);
+    CHECK(!classify_portrait_scene(scene_fields(2, 2, 0, 4, 4), true).mapReady);
+    // Extra modes (Sisters, Richter, ...) were never validated with the map.
+    for (const std::uint8_t type : {1, 2, 3, 4, 5}) {
+        verdict = classify_portrait_scene(scene_fields(2, 2, type, 0, 0), true);
+        CHECK(verdict.scene == GameScene::ExtraMode && !verdict.gameplay && !verdict.mapReady);
+    }
+    CHECK(std::string(game_scene_name(GameScene::Title)) == "title");
+}
+
+void map_command_opens_only_ready_maps_and_always_closes() {
+    // Opening needs an unpaused, ready map; anything else changes nothing.
+    CHECK(map_command({false, false, false, false, true}) == MapCommand::Open);
+    CHECK(map_command({false, false, false, false, false}) == MapCommand::Refuse);
+    CHECK(map_command({false, false, false, true, true}) == MapCommand::None);
+    // Closing and cancelling never depend on the scene.
+    CHECK(map_command({true, true, false, false, false}) == MapCommand::CloseVoluntary);
+    CHECK(map_command({true, true, false, true, true}) == MapCommand::CloseVoluntary);
+    CHECK(map_command({false, true, false, true, false}) == MapCommand::Cancel);
+    CHECK(map_command({false, false, true, false, false}) == MapCommand::Cancel);
+}
+
+void portrait_gate_separates_identity_gameplay_and_map() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    const auto title = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    const auto ready = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    const auto fading = classify_portrait_scene(scene_fields(2, 1, 0, 0, 0), true);
+    gate.update({portrait, true, false, false, ready});
+    // Title screen: the mod may be toggled (identity, input) but View is native.
+    auto state = gate.update({portrait, true, false, false, title});
+    CHECK(state.identity && state.input && !state.gameplay && !state.mapReady);
+    state = gate.update({portrait, true, false, false, ready});
+    CHECK(state.gameplay && state.mapReady && state.gameplayChanged);
+    state = gate.update({portrait, true, false, false, fading});
+    CHECK(state.gameplay && !state.mapReady && !state.gameplayChanged);
+    // The mod's own pause keeps a frozen ready map ready; a foreign pause does not.
+    CHECK(gate.update({portrait, true, true, true, ready}).mapReady);
+    CHECK(!gate.update({portrait, true, true, false, ready}).mapReady);
+    // No identity: nothing, whatever the scene says.
+    TitleObservation other = portrait;
+    other.portrait = false;
+    other.reason = TitleReason::OtherTitle;
+    state = gate.update({other, true, false, false, ready});
+    CHECK(!state.identity && !state.gameplay && !state.mapReady && state.gameplayChanged);
+}
+
+// Mirrors live_controller's View handling: mapAllowed = gameplay (plus the
+// usual mod/focus/pause terms), and a ToggleMap is executed by map_command.
+void view_follows_scene_without_duplicate_or_stray_commands() {
+    PortraitGate gate;
+    InputRecognizer recognizer;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    InputSnapshot sample{};
+    PortraitGateState state{};
+    const auto step = [&](std::uint16_t buttons, const SceneVerdict& scene) {
+        state = gate.update({portrait, true, false, false, scene});
+        if (state.inputChanged) recognizer.reset();
+        if (!state.input) return InputResult{buttons, 0, InputAction::None, false, false};
+        sample.buttons = buttons;
+        const InputPolicy policy{true, true, state.gameplay, 1};
+        return recognizer.update(sample, policy);
+    };
+    const auto title = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    const auto ready = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    const auto switching = classify_portrait_scene(scene_fields(2, 2, 0, 0, 1), true);
+    const auto menu = classify_portrait_scene(scene_fields(7, 2, 0, 0, 0), true);
+    step(0, title);
+    step(0, title);
+    // Title: View is native Select (replayed on release), no map command.
+    CHECK(step(ButtonView, title).forwardedButtons == 0);
+    auto result = step(0, title);
+    CHECK(result.action == InputAction::None && result.delayedViewPulse && result.forwardedButtons == ButtonView);
+    // View+Y still toggles the mod on the title screen.
+    step(ButtonView, title);
+    CHECK(step(ButtonView | ButtonY, title).action == InputAction::ToggleMod);
+    step(0, title);
+    // Gameplay: View is the map command, decided at release by map_command.
+    CHECK(step(ButtonView, ready).forwardedButtons == 0);
+    result = step(0, ready);
+    CHECK(result.action == InputAction::ToggleMap && !result.delayedViewPulse);
+    CHECK(map_command({false, false, false, false, state.mapReady}) == MapCommand::Open);
+    // A sub-screen switch in progress: consumed, refused, no Select page flip.
+    CHECK(step(ButtonView, switching).forwardedButtons == 0);
+    result = step(0, switching);
+    CHECK(result.action == InputAction::ToggleMap && !result.delayedViewPulse && result.forwardedButtons == 0);
+    CHECK(map_command({false, false, false, false, state.mapReady}) == MapCommand::Refuse);
+    // View held from gameplay into the pause menu: swallowed and drained, no
+    // map, no Select, no second command on release.
+    CHECK(step(ButtonView, ready).forwardedButtons == 0);
+    result = step(ButtonView, menu);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    result = step(0, menu);
+    CHECK(result.action == InputAction::None && !result.delayedViewPulse && result.forwardedButtons == 0);
+    // Then, in the menu, View is native Select again.
+    step(ButtonView, menu);
+    result = step(0, menu);
+    CHECK(result.action == InputAction::None && result.delayedViewPulse);
+    // And held from the title into gameplay: drained, never a map command.
+    step(0, title);
+    step(ButtonView, title);
+    result = step(ButtonView, ready);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    result = step(0, ready);
+    CHECK(result.action == InputAction::None && !result.delayedViewPulse);
+}
+
 // Mirrors live_controller: a gate change resets the recognizer, the inactive
 // filter forwards the raw word, and a View held across reactivation drains.
 void gate_changes_never_carry_a_gesture_across_contexts() {
@@ -1495,6 +1657,10 @@ int main() {
         {"portrait_gate_confirms_identity_and_revokes_at_once", portrait_gate_confirms_identity_and_revokes_at_once},
         {"portrait_gate_keeps_input_out_of_foreign_pauses", portrait_gate_keeps_input_out_of_foreign_pauses},
         {"gate_changes_never_carry_a_gesture_across_contexts", gate_changes_never_carry_a_gesture_across_contexts},
+        {"portrait_scene_separates_title_menus_and_gameplay", portrait_scene_separates_title_menus_and_gameplay},
+        {"map_command_opens_only_ready_maps_and_always_closes", map_command_opens_only_ready_maps_and_always_closes},
+        {"portrait_gate_separates_identity_gameplay_and_map", portrait_gate_separates_identity_gameplay_and_map},
+        {"view_follows_scene_without_duplicate_or_stray_commands", view_follows_scene_without_duplicate_or_stray_commands},
     };
     int failures = 0;
     for (const auto& test : tests) {

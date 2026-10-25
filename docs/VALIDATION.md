@@ -74,3 +74,36 @@ No compiler warnings came from project sources.
 Nothing was launched, attached to or installed: the title verdicts, the
 collection-menu pause assumption and RE-1b in [TITLE-ISOLATION.md](TITLE-ISOLATION.md)
 still need the real-test plan described there.
+
+## v0.1.1 candidate rc6 in game (2026-10-25)
+
+`-Release` DLL `C091FE79F51E99EFC9527D9B619C2E6F78199998D241BC7FCDF94C34A386DFB7`,
+installed with the repository scripts over a hash-verified backup, rc5 kept as
+rollback, Steam Cloud off. Two sessions (private logs, not distributed):
+
+- start-up menu `other-title,index=0` (dra01 behind the menu); Portrait verified
+  after `module-mismatch` while setEmuModuleNum(1) preceded the reload;
+- View+Y, 8 gameplay map openings (pixel panel choice, native pause, all 11
+  pauses released), the marker and the collection menu (`input-gate,passthrough`,
+  then active) worked;
+- RE-1b: back in the collection menu the fields still named Portrait, but the
+  EmuTask was paused, so input passed unchanged; Ecclesia (index 2, dra03) and
+  Dawn (index 0) were `other-title` with no filtered input logged; Haunted Castle
+  was not visited;
+- progress: only the collection's automatic `*_008_*`, `savecfg.txt` and
+  `remotecache.vdf` changed; title saves unchanged, nothing removed.
+
+Defect: on Portrait's title screen, with the mod on, View opened the enlarged
+sub-screen (a graveyard image): 3 of the 11 openings, all with
+`upperBrown=lowerBrown=0`. Fixed by the scene
+gate in [TITLE-ISOLATION.md](TITLE-ISOLATION.md).
+
+## v0.1.1 candidate rc7: scene gate (synthetic only)
+
+Core 50 groups (46 + scene classifier, map command, gate separation and View
+transitions); Steam pad 9; WARP with `--proxy` 19 (the host test also checks the
+scene probe never reads a module other than the loaded dra02.dll); guard 1;
+Python 19. The installer fixtures refused to start while an unrelated `game.exe`
+(another M2 collection) was running — its name-only guard — and were not rerun;
+the install scripts are unchanged since they passed 11 fixtures. Not validated
+in game; see the rc7 plan in TITLE-ISOLATION.md.

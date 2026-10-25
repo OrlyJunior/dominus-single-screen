@@ -19,6 +19,9 @@ constexpr std::uintptr_t TaskGlobalRva = 0x599fd0, TaskVtableRva = 0x512850;
 constexpr std::uintptr_t ReadyOffset = 0x184, ModuleOffset = 0x528, IndexOffset = 0x53c;
 // The same dra02.dll that marker_identity verifies before reading positions.
 constexpr std::uint64_t PortraitFileSize = 5056512;
+// dra02.dll RVAs of the scene fields documented with PortraitStateFields.
+constexpr std::uintptr_t ModeRva = 0x98c224, GameStateRva = 0x9b1e3c, GameTypeRva = 0x9b2661, PageRva = 0x9bb6f8;
+static_assert(sizeof(PortraitStateFields) == 5, "byte fields compared with memcmp");
 constexpr std::array<unsigned char, 32> PortraitHash = {
     0xff,0xef,0xa1,0x10,0x9a,0x43,0xfa,0x7a,0x01,0x9a,0x80,0xee,0x16,0xc6,0xf2,0x87,
     0x88,0x43,0x02,0xc8,0xcb,0xb9,0x21,0xd3,0x61,0xf5,0x95,0xe7,0x30,0xc3,0x87,0x44
@@ -195,6 +198,26 @@ TitleObservation observe(std::uintptr_t observedTask, std::uint64_t taskEpoch) n
     static auto* detector = new (std::nothrow) TitleDetector;
     if (!platform || !detector) return {};
     return detector->update(*platform, observedTask, taskEpoch, GetTickCount64());
+}
+
+PortraitSceneSample portrait_scene(const TitleObservation& title) noexcept {
+    const auto module = title.fields.module;
+    if (!title.portrait || !module) return {};
+    const auto read = [module](PortraitStateFields& fields) noexcept {
+        std::array<std::uint8_t, 2> pages{};
+        if (!read_value(module + ModeRva, fields.mode) || !read_value(module + GameStateRva, fields.gameState) ||
+            !read_value(module + GameTypeRva, fields.gameType) || !read_memory(module + PageRva, pages.data(), pages.size()))
+            return false;
+        fields.page = pages[0];
+        fields.requestedPage = pages[1];
+        return true;
+    };
+    PortraitSceneSample sample{};
+    PortraitStateFields again{};
+    if (!read(sample.fields) || !read(again) || std::memcmp(&sample.fields, &again, sizeof(again)) != 0 ||
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"dra02.dll")) != module) return {};
+    sample.available = true;
+    return sample;
 }
 
 } // namespace dominus::title

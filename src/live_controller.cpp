@@ -46,6 +46,12 @@ struct State {
     // filter also stays out of pauses the mod does not own (collection menus).
     PortraitGate gate;
     bool identityActive=false,inputActive=false;
+    // Portrait's own scene: View is the map command only in gameplay, and the
+    // map opens only while the sub-screen shows it (classify_portrait_scene).
+    bool gameplay=false,mapReady=false;
+    SceneVerdict scene{};
+    PortraitStateFields sceneFields{};
+    bool sceneAvailable=false;
     std::uint64_t titleGeneration=0;
     std::wstring directory;
     Log log=nullptr;
@@ -56,8 +62,17 @@ void clear_release_tracking(State& s) noexcept {
     s.voluntaryClose=s.releaseConfirmed=false;
     s.releasedToken=s.releasedEpoch=0;
 }
-void update_gate(State& s,const TitleObservation& title,const native::Status& st) noexcept {
-    const auto gate=s.gate.update({title,st.pauseKnown,st.paused,s.token!=0||s.awaiting!=0||st.stalePause});
+void log_scene(State& s,const char* what) noexcept {
+    char line[200]{};const auto& f=s.sceneFields;
+    std::snprintf(line,sizeof(line),"%s,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,gameplay=%u,mapReady=%u",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(s.gameplay),unsigned(s.mapReady));log(line);
+}
+void update_gate(State& s,const TitleObservation& title,const title::PortraitSceneSample& sample,const native::Status& st) noexcept {
+    const auto scene=classify_portrait_scene(sample.fields,sample.available);
+    const auto gate=s.gate.update({title,st.pauseKnown,st.paused,s.token!=0||s.awaiting!=0||st.stalePause,scene});
+    const bool sceneChanged=scene.scene!=s.scene.scene||gate.gameplay!=s.gameplay||gate.mapReady!=s.mapReady||sample.available!=s.sceneAvailable||
+                            sample.fields.mode!=s.sceneFields.mode||sample.fields.page!=s.sceneFields.page||sample.fields.requestedPage!=s.sceneFields.requestedPage;
+    s.scene=scene;s.sceneFields=sample.fields;s.sceneAvailable=sample.available;s.gameplay=gate.gameplay;s.mapReady=gate.mapReady;
+    if(sceneChanged&&gate.identity)log_scene(s,"live,scene");
     if(title.generation!=s.titleGeneration){
         s.titleGeneration=title.generation;char line[220]{};
         std::snprintf(line,sizeof(line),"title,portrait=%u,reason=%s,index=%d,ready=%u,module=0x%llx,epoch=%llu",unsigned(title.portrait),title_reason_name(title.reason),title.fields.index,unsigned(title.fields.ready),static_cast<unsigned long long>(title.fields.module),static_cast<unsigned long long>(title.taskEpoch));log(line);
@@ -165,6 +180,7 @@ gfx::Request frame(HWND window) noexcept {
         input::on_present();auto st=native::status_snapshot();auto reply=native::pause_reply_snapshot();
         // Outside our lock: the first sight of a loaded dra02.dll hashes it once.
         const auto title=title::observe(st.taskObserved?st.task:0,st.taskEpoch);
+        const auto sceneSample=title::portrait_scene(title);
         auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);if(!s.ready)return {};
         const auto foreground=GetForegroundWindow();s.focused=foreground==window||(foreground&&IsChild(window,foreground));
         s.epoch=st.taskEpoch;s.revision=st.pauseRevision;
@@ -188,7 +204,7 @@ gfx::Request frame(HWND window) noexcept {
             s.awaiting=0;
         }
         if(s.token&&st.ownedPauseToken!=s.token){s.token=0;s.map=false;clear_release_tracking(s);log("live,pause-ownership-lost");}
-        update_gate(s,title,st);
+        update_gate(s,title,sceneSample,st);
         const auto now=GetTickCount();bool releaseStale=false;
         if(now-s.lastPoll>=120&&!s.directory.empty()){
             s.lastPoll=now;const auto path=s.directory+L"\\control.ini";
@@ -203,22 +219,34 @@ gfx::Request frame(HWND window) noexcept {
         // Recovery for a pause the mod created that nothing owns any more (the
         // collection's menu stacked on it and closed without unpausing): an
         // explicit View, or control.ini Action=3, releases exactly that pause.
+        // The DS stays frozen in the gameplay the map was opened from, so View
+        // is still the mod's command there.
         if(st.stalePause&&!s.token&&!s.awaiting&&(releaseStale||(s.action==InputAction::ToggleMap&&s.enabled&&s.focused&&s.nativeReady))){
             s.action=InputAction::None;
             clear_release_tracking(s);
             if(queue(native::PauseCommandKind::ReleaseStale))log("live,stale-mod-pause-release-requested");
         }
-        if(!s.identityActive||!s.focused||s.disconnected||!s.nativeReady||!s.enabled||(st.paused&&!s.token))close(false);
+        // A map that stopped being valid (its pause request raced a scene
+        // change) closes through the lease checks; frozen under our pause, a
+        // valid one stays valid.
+        if(!s.identityActive||!s.focused||s.disconnected||!s.nativeReady||!s.enabled||(st.paused&&!s.token)||((s.token||s.choosing)&&!s.mapReady))close(false);
         if(s.action==InputAction::ToggleMod){s.enabled=!s.enabled;close(false);log(s.enabled?"live,mod-enabled":"live,mod-disabled");}
         else if(s.action==InputAction::ToggleMap&&s.enabled&&s.focused&&s.nativeReady&&!s.awaiting){
-            if(s.map&&s.token)close(true);
-            else if(s.token||s.choosing)close(false);
-            else if(!st.paused){clear_release_tracking(s);s.choosing=s.panelsWanted=true;s.panelsReady=false;s.chooseDeadline=GetTickCount64()+ChooseBudgetMs;}
+            switch(map_command({s.map&&s.token!=0,s.token!=0,s.choosing,st.paused,s.mapReady})){
+            case MapCommand::CloseVoluntary:close(true);break;
+            case MapCommand::Cancel:close(false);break;
+            case MapCommand::Open:clear_release_tracking(s);s.choosing=s.panelsWanted=true;s.panelsReady=false;s.chooseDeadline=GetTickCount64()+ChooseBudgetMs;break;
+            // Gameplay without a map to show (fade, death, sub-screen switch): nothing.
+            case MapCommand::Refuse:log_scene(s,"live,map-refused");break;
+            case MapCommand::None:break;
+            }
         }
         s.action=InputAction::None;
         if(s.choosing){if(st.paused)close(false);else finish_choice(GetTickCount64());}
-        // A stale mod pause keeps View as a mod command so it can release it.
-        s.mapAllowed=s.identityActive&&s.enabled&&s.focused&&s.nativeReady&&(!st.paused||s.token||st.stalePause);
+        // View is the map command only in Portrait gameplay; elsewhere (title,
+        // menus, sequences, unknown states) it stays the game's own Select. A
+        // stale mod pause keeps View as a mod command so it can release it.
+        s.mapAllowed=s.identityActive&&s.gameplay&&s.enabled&&s.focused&&s.nativeReady&&(!st.paused||s.token||st.stalePause);
         const bool waitingRelease=s.awaiting!=0&&s.waitingKind==native::PauseCommandKind::Release;
         if(s.releaseConfirmed&&(st.paused||!st.pauseKnown||st.taskEpoch!=s.releasedEpoch))clear_release_tracking(s);
         if(waitingRelease&&st.taskEpoch!=s.releasedEpoch)clear_release_tracking(s);

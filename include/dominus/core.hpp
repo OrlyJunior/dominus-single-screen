@@ -508,6 +508,51 @@ private:
     unsigned attempts_ = 0, verifications_ = 0;
 };
 
+// What a supported title is doing, separate from which title it is. Only a
+// title-specific classifier fills it; a title without one stays Unknown, so
+// nothing treats every screen of a supported title as gameplay.
+enum class GameScene { Unknown, Boot, Title, StartMenu, Loading, Gameplay, InGameMenu, Sequence, ExtraMode };
+const char* game_scene_name(GameScene scene) noexcept;
+struct SceneVerdict {
+    GameScene scene = GameScene::Unknown;
+    // View belongs to the mod (enlarged map). Elsewhere it stays native Select.
+    bool gameplay = false;
+    // The sub-screen shows the real map now: the enlarged map may open.
+    bool mapReady = false;
+};
+
+// Portrait's own state, read from dra02.dll FFEFA110...8744 (Ghidra 12.1.4;
+// docs/TITLE-ISOLATION.md). The GameThread loop 0x1800149a0 calls
+// modes[0x1803695a0][mode 0x18098c224] each frame: 2 is gameplay (0x180037d80,
+// running while 0x1809b1e3c == 2; Start enters 7, the pause menu), 5 the title,
+// 0xb the Konami logo, 0/1 game start/load, 7/8/9 in-game menus, 0x12/0x13/0x16
+// start menus, 0xd-0x11/0x17 scripted sequences. The sub-screen page manager
+// 0x180022ab0 shows page 0x1809bb6f8 and switches to the requested 0x1809bb6f9:
+// 0 = map (Status drawn alongside), 1 = Status (map alongside, native Select
+// toggles 0/1), 4 menus, 5/6 title images. Game type 0x1809b2661 is 0 for the
+// normal game; 1-5 are extra modes whose second panel is another screen.
+struct PortraitStateFields {
+    std::uint8_t mode = 0xff;
+    std::uint8_t gameState = 0xff;
+    std::uint8_t gameType = 0xff;
+    std::uint8_t page = 0xff;
+    std::uint8_t requestedPage = 0xff;
+};
+inline constexpr std::uint8_t PortraitGameplayMode = 2, PortraitRunningState = 2;
+// available=false (unreadable or inconsistent fields) is Unknown.
+SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool available) noexcept;
+
+// What a View release asks of the map, decided from the current state only.
+enum class MapCommand { None, CloseVoluntary, Cancel, Open, Refuse };
+struct MapCommandInput {
+    bool mapOpen = false;   // the map is shown under the mod's own pause
+    bool owned = false;     // the mod holds a pause lease
+    bool choosing = false;  // panel selection before the pause request
+    bool paused = false;    // the EmuTask is paused
+    bool mapReady = false;
+};
+MapCommand map_command(const MapCommandInput& input) noexcept;
+
 struct PortraitGateInput {
     TitleObservation title{};
     bool pauseKnown = false;
@@ -515,17 +560,22 @@ struct PortraitGateInput {
     // The mod owns the pause, has a pause request in flight, or left a stale
     // pause that only it may release (native::Status::stalePause).
     bool modPause = false;
+    SceneVerdict scene{};
 };
 struct PortraitGateState {
     bool identity = false;  // Portrait-specific presentation, map, pause and marker may run
     bool input = false;     // the input filter may reserve, delay or chord View/Y
+    bool gameplay = false;  // identity, and View is the map command (not native Select)
+    bool mapReady = false;  // gameplay, input, and the enlarged map may open now
     bool identityChanged = false;
     bool inputChanged = false;
+    bool gameplayChanged = false;
 };
 // Identity needs Confirmations consecutive verified observations of the same
 // module and task epoch; anything else revokes it at once. Input additionally
 // needs a known pause state that is either clear or the mod's own, so the
 // collection's menus (which pause the EmuTask) receive their original input.
+// Gameplay and mapReady come from the scene verdict and need identity.
 class PortraitGate {
 public:
     static constexpr unsigned Confirmations = 2;
@@ -533,12 +583,13 @@ public:
     void reset() noexcept { *this = PortraitGate{}; }
     bool identity() const noexcept { return identity_; }
     bool input() const noexcept { return input_; }
+    bool gameplay() const noexcept { return gameplay_; }
 
 private:
     unsigned streak_ = 0;
     std::uintptr_t module_ = 0;
     std::uint64_t epoch_ = 0;
-    bool identity_ = false, input_ = false;
+    bool identity_ = false, input_ = false, gameplay_ = false;
 };
 
 } // namespace dominus

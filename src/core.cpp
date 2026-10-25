@@ -849,6 +849,68 @@ bool TitleDetector::file_verified(ITitlePlatform& platform, const TitleModuleIma
     return fileOk_;
 }
 
+const char* game_scene_name(GameScene scene) noexcept {
+    switch (scene) {
+        case GameScene::Unknown: return "unknown";
+        case GameScene::Boot: return "boot";
+        case GameScene::Title: return "title";
+        case GameScene::StartMenu: return "start-menu";
+        case GameScene::Loading: return "loading";
+        case GameScene::Gameplay: return "gameplay";
+        case GameScene::InGameMenu: return "in-game-menu";
+        case GameScene::Sequence: return "sequence";
+        case GameScene::ExtraMode: return "extra-mode";
+    }
+    return "unknown";
+}
+
+SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool available) noexcept {
+    SceneVerdict verdict{};
+    if (!available) return verdict;
+    switch (fields.mode) {
+        case PortraitGameplayMode:
+            // Extra modes keep other sub-screens; never validated with the map.
+            if (fields.gameType != 0) {
+                verdict.scene = GameScene::ExtraMode;
+                return verdict;
+            }
+            verdict.scene = GameScene::Gameplay;
+            verdict.gameplay = true;
+            // Fade-in, death and a sub-screen switch in progress are gameplay
+            // without a map to show yet.
+            verdict.mapReady = fields.gameState == PortraitRunningState &&
+                               fields.page == fields.requestedPage && fields.page <= 1;
+            return verdict;
+        case 0x00: case 0x01: case 0x14: case 0x15:
+            verdict.scene = GameScene::Loading;
+            return verdict;
+        case 0x05:
+            verdict.scene = GameScene::Title;
+            return verdict;
+        case 0x0b: case 0x1c:
+            verdict.scene = GameScene::Boot;
+            return verdict;
+        case 0x07: case 0x08: case 0x09:
+            verdict.scene = GameScene::InGameMenu;
+            return verdict;
+        case 0x12: case 0x13: case 0x16: case 0x1a: case 0x1b:
+            verdict.scene = GameScene::StartMenu;
+            return verdict;
+        case 0x0d: case 0x0e: case 0x0f: case 0x10: case 0x11: case 0x17:
+            verdict.scene = GameScene::Sequence;
+            return verdict;
+        default:
+            return verdict;
+    }
+}
+
+MapCommand map_command(const MapCommandInput& input) noexcept {
+    if (input.mapOpen && input.owned) return MapCommand::CloseVoluntary;
+    if (input.owned || input.choosing) return MapCommand::Cancel;
+    if (input.paused) return MapCommand::None;
+    return input.mapReady ? MapCommand::Open : MapCommand::Refuse;
+}
+
 PortraitGateState PortraitGate::update(const PortraitGateInput& input) noexcept {
     if (input.title.portrait) {
         if (streak_ && (module_ != input.title.fields.module || epoch_ != input.title.taskEpoch)) streak_ = 0;
@@ -861,10 +923,14 @@ PortraitGateState PortraitGate::update(const PortraitGateInput& input) noexcept 
     PortraitGateState state{};
     state.identity = streak_ >= Confirmations;
     state.input = state.identity && input.pauseKnown && (!input.paused || input.modPause);
+    state.gameplay = state.identity && input.scene.gameplay;
+    state.mapReady = state.gameplay && state.input && input.scene.mapReady;
     state.identityChanged = state.identity != identity_;
     state.inputChanged = state.input != input_;
+    state.gameplayChanged = state.gameplay != gameplay_;
     identity_ = state.identity;
     input_ = state.input;
+    gameplay_ = state.gameplay;
     return state;
 }
 

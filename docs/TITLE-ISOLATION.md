@@ -1,8 +1,8 @@
 # Title isolation (v0.1.1 candidate)
 
-Status: **implemented and covered by synthetic tests; not yet validated in game.**
-No game was opened, attached to or instrumented for this change, and no
-installation, save or configuration was modified.
+Status: the title gate (rc6) passed a real session on 2026-10-25 except for
+the title-screen map, fixed by the scene gate below (rc7: synthetic tests only).
+No game was opened or instrumented while developing either change.
 
 ## Problem in v0.1.0
 
@@ -115,6 +115,58 @@ cycle and retention, the disconnect path that releases the mod pause first, the
 stale-pause recovery and all rc5 fallbacks. Native hooks remain pass-through
 observers in every title.
 
+## Scene gate: title supported vs gameplay (rc7)
+
+The rc6 session showed the title gate is not enough: on Portrait's own title
+screen View opened the enlarged sub-screen, which there shows a graveyard image.
+Two separate questions are now answered:
+
+- **Supported title identified** (identity above): the mod may stay enabled,
+  View+Y toggles it and presentation follows the on/off state, as in rc6.
+- **Gameplay with a valid map** (scene): only then is View the map command and
+  only then may the enlarged map open.
+
+The scene comes from Portrait's own state, read from the verified dra02.dll
+(five bytes, read twice, module handle re-checked; never pixels):
+
+| Fact (dra02.dll FFEFA110…8744) | Address | Evidence |
+| --- | --- | --- |
+| GameThread loop: `modes[mode]()` each frame, the return selects the next mode | 0x1800149a0, table 0x1803695a0, mode byte 0x18098c224 | S1, S2 |
+| mode 2 = gameplay; sub-state 0x1809b1e3c: 0 init, 1 fade-in, 2 running (Start → mode 7), 3 end | 0x180037d80 | S3 |
+| 0/1 game start/load (restores the map/Status page), 0xb Konami logo (pages 6 then 5), 0x1c → 0xb | 0x180038cb0, 0x1800386d0, 0x1801f7c30 | S3, S4 |
+| 5 title (page 6; its menu leads to 0/0x12/0x13/0x16/0x1a/0x1b) | 0x180139e10 | S5 |
+| 7/8/9 in-game menus (return to 2), 0x12/0x13/0x16 start menus (page 4), 0xd–0x11/0x17 sequences | see table | S4, S5 |
+| sub-screen page manager: shows 0x1809bb6f8, switches to request 0x1809bb6f9; page 0 builds `f_map_chara` with Status alongside, page 1 Status with the map alongside | 0x180022ab0, 0x1802e6b10, 0x18002da20 | S6 |
+| game type 0x1809b2661: 0 normal game (set by the title); 1–5 extra modes draw another screen alongside | 0x180022ab0, 0x180139e10, 0x1800386d0 | S5, S6 |
+
+Evidence IDs: S1 `ev_5e97c2f2cfcde9ec8483ecb0d56b82de4fd8209b8c70cf0176d5ab1861133600`,
+S2 `ev_1d904ecdc37f46e55d95f647709afe185f7eed2f9a1d1ee7232e090705c20df1`,
+S3 `ev_68d6f59e79aade629c8de0a620f3601b3b7a47e68840569ca5f4a8116d5b0f17`,
+S4 `ev_edff6e58b0863163d9a597887f334111a4bb717f2bd6ad88a4aec522d959006d`,
+S5 `ev_382d1176ddbaf699360afa0caf1ce9d83382c8f15f337bba9cdf53d48a55a109`,
+S6 `ev_16a5971c637b9dd80266892dce9dd37752756ca3c5f8f532e1d672fd8bb48fec`.
+
+`classify_portrait_scene` (core) maps these to Boot, Title, StartMenu, Loading,
+Gameplay, InGameMenu, Sequence, ExtraMode or Unknown:
+
+- **gameplay** = mode 2 and game type 0. Then View is the map command; anywhere
+  else (title, menus, sequences, extra modes, unknown or unreadable state) View
+  remains the game's own Select, replayed on release as before, and View+Y still
+  toggles the mod.
+- **mapReady** = gameplay, sub-state 2, page 0 or 1 and no page switch pending,
+  plus the input gate. A View released in gameplay without a ready map is
+  consumed and refused (`live,map-refused`): no map, no pause, no Select page flip.
+
+`map_command` decides each release: close an owned map voluntarily, cancel a
+pending one, open only a ready map, otherwise nothing. A map or panel selection
+whose scene stops being ready closes through the existing lease checks (under the
+mod's own pause the DS is frozen, so a valid map stays valid). A View held across
+a scene change is drained by the recognizer: no map, no Select, no second
+command. The page variable alone would not do: it is 0 at start-up before the
+Konami screen requests page 6, hence the mode check. The 39-tick marker code and
+its tracking are unchanged. This classifier is Portrait's; Dawn/Ecclesia would
+need their own, and without one a supported title stays Unknown (never gameplay).
+
 ## Guarantees and limits
 
 - Fail-closed: no Portrait-specific presentation, map, marker or pause command
@@ -122,32 +174,33 @@ observers in every title.
 - Other DS titles, Haunted Castle, the static module, start-up before any load,
   loads in progress and unloaded or altered dra02.dll are never Portrait.
 - `EnableNativeObserver=0` leaves the mod fully inert (no observed task).
-- **Unknown (RE-1b):** whether returning from Portrait to the collection's title
-  menu reloads or resets the module fields. No native path clears them; scripts
-  were not analyzed. If they persist, the menu still reads as Portrait: then the
-  input gate relies on the menu keeping the EmuTask paused (observed at start-up,
-  not yet after leaving a game) and presentation already stays Original while
-  another actor pauses. Confirm in the real test below.
+- **RE-1b (answered in the rc6 session):** after leaving Portrait the collection's
+  title menu keeps index 1 and dra02.dll loaded, but pauses the EmuTask, so input
+  passes unchanged and presentation stays Original there. Choosing another title
+  first writes its index (setEmuModuleNum), which already ends Portrait.
 - A paused-by-collection state inside Portrait (its own menus) now passes input
   unchanged; View+Y no longer toggles the mod there. Intentional, not yet tested.
 - Hashing runs once per Portrait load on the render thread (one longer frame).
 
-## Real-test plan (requires explicit authorization)
+## Real-test plan for rc7 (requires explicit authorization)
 
-Before: verify the installed files' SHA-256, back up saves/configuration, keep
-v0.1.0/rc5 as the rollback, use `DiagnosticDirectory` and keep marker traces
-off. Never save manually, create save states or restore progress automatically.
+Before: a fresh, verified private backup of progress and configuration,
+installed-file hashes, rc6/rc5 kept as rollback, Steam Cloud off for the app. Never save manually, create save states or restore automatically.
+Logs: `live,scene,…` on each scene/page change and `live,map-refused,…`.
 
-1. Start-up menu: expect `title,…reason=other-title,index=0` (dra01 behind the
-   menu); View/Y unchanged; View+Y does nothing.
-2. Load Portrait: `portrait-verified` then `input-gate,active`; View+Y, map,
-   39-tick marker, retention, disconnect and stale-pause flows as in rc5.
-3. Open the collection menu in Portrait (`input-gate,passthrough`): its own
-   View/Y behavior original; close it: input active again.
-4. Return to the title menu: record the `title,…` line and `paused` state (RE-1b);
-   View/Y must be original; screen must not be cropped.
-5. Dawn of Sorrow, Order of Ecclesia and Haunted Castle, with the mod enabled
-   beforehand in Portrait: no crop, Select held/tapped natively, View+Y inert.
-6. Back to Portrait: single-screen state restored, map and marker working.
-7. Afterwards: compare installed and original file hashes, and saves against the
-   backup; report differences without restoring anything automatically.
+1. Portrait title screen, mod enabled with View+Y: View tapped and held does
+   only what native Select does there; no enlarged screen; no pause.
+2. Start-menu screens (file select, options) with the mod on: same.
+3. Load the save: `scene=gameplay … mapReady=1`; View opens/closes the map, the
+   marker animates, retention after stationary reopenings, View+Y as before.
+4. Press View during a room transition, right after loading and while Select
+   switches pages: either a map (ready) or nothing (refused); never a page flip.
+5. Start menu (in-game): View is native Select there; close it, map works again.
+6. Hold View while entering/leaving the Start menu or a door: no map, no stuck
+   pause, mod state unchanged.
+7. Return to the title, then Dawn/Ecclesia title screens: isolation as in rc6.
+8. Afterwards: compare installed/original hashes and saves with the snapshot.
+
+Still unvalidated: extra modes (Sisters, Richter, …: View stays native, map
+closed), save/warp rooms and other in-game events if they use another mode,
+Boss Rush, ending/credits, and whether every in-game dialogue keeps page 0/1.

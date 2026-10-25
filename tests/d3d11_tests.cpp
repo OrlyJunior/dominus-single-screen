@@ -1077,6 +1077,10 @@ void title_identity_fails_closed_outside_the_game() {
             require(!observed.portrait&&observed.reason==dominus::TitleReason::NoTask,"non-game host reports no EmuTask and no Portrait");
         }
     }
+    dominus::TitleObservation claimed{};
+    claimed.portrait=true;claimed.fields.module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    require(!dominus::title::portrait_scene(claimed).available,"scene fields are never read from a module that is not the loaded dra02.dll");
+    require(!dominus::title::portrait_scene(dominus::TitleObservation{}).available,"no scene without a verified title");
     require(!GetModuleHandleW(L"dra02.dll"),"the check loaded no game module");
 }
 

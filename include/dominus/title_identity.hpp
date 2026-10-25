@@ -14,4 +14,14 @@ namespace dominus::title {
 // is their lifecycle epoch (construct, destroy and reinitialize advance it).
 TitleObservation observe(std::uintptr_t observedTask, std::uint64_t taskEpoch) noexcept;
 
+struct PortraitSceneSample {
+    bool available = false;
+    PortraitStateFields fields{};
+};
+// Render thread. Reads Portrait's mode, game state/type and sub-screen pages
+// (core.hpp) from the dra02.dll that `title` verified, twice. Unavailable
+// unless title.portrait, both reads agree and the module is still loaded at
+// the same handle. Five bytes; no game code is called.
+PortraitSceneSample portrait_scene(const TitleObservation& title) noexcept;
+
 }
