@@ -11,16 +11,19 @@ private copy, draws point-filtered 4:3 gameplay/map and clears unused space blac
 It restores the relevant D3D11 state and refuses unsupported states/resources.
 This is not a general layout detector or a replacement for every D3D11 wrapper.
 
-## Title isolation (v0.1.1 candidate)
+## Title isolation and gameplay scene
 
 The common game.exe hosts every collection title, so the version gate alone
 does not identify Portrait. title_identity reads the EmuTask's module index,
 loaded HMODULE and ready flag twice per Present and accepts Portrait only for
 the exact dra02.dll loaded from the game directory (hash cached per image and
-re-checked on new task epochs). PortraitGate turns presentation, map, pause
-commands and marker tracking on after two consecutive verified frames and off at
-once; the input filter additionally stays out of pauses the mod does not own.
-Outside that context buttons pass unchanged. See [TITLE-ISOLATION.md](TITLE-ISOLATION.md).
+re-checked on new task epochs). portrait_scene then reads Portrait's own mode,
+gameplay state, game type and sub-screen pages. PortraitGate enables the mod's
+presentation, toggling, pause and marker tracking after two verified frames and
+disables them at once; View is the map command only in normal gameplay and the
+map opens only while the sub-screen shows it. The input filter also stays out of
+pauses the mod does not own; outside these contexts buttons pass unchanged.
+See [TITLE-ISOLATION.md](TITLE-ISOLATION.md).
 
 ## Input and native pause
 

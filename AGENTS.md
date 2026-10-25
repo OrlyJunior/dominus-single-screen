@@ -1,6 +1,6 @@
 # Contributor instructions
 
-This repository publishes the validated Portrait of Ruin implementation as v0.1.0.
+This repository publishes the validated Portrait of Ruin implementation (v0.1.1).
 Do not assume another title, game fingerprint, display layout, or ABI is supported.
 Read README.md and docs/ARCHITECTURE.md before changing runtime behavior.
 

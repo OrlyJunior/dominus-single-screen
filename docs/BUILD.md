@@ -74,7 +74,7 @@ only synthetic tests; it neither installs nor starts a game.
 ## Optional local package
 
 Only after building, a private package can be prepared with
-`scripts/Package-Release.ps1 -BuildDirectory $buildDirectory -OutputDirectory $packageOutput -Version 0.1.0`.
+`scripts/Package-Release.ps1 -BuildDirectory $buildDirectory -OutputDirectory $packageOutput -Version 0.1.1`.
 It creates files only at the requested output and refuses an existing package.
 Do not commit the resulting binary/archive. Package creation is not publishing a
 GitHub Release and does not install it. Preserve all included license notices.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (unreleased candidate)
+## 0.1.1 — 2026-10-25
 
 - Title isolation: the mod acts only while Portrait of Ruin is the verified
   active title (EmuTask module index, loaded dra02.dll handle, path and hash,
@@ -14,8 +14,9 @@
   toggles the mod); in gameplay without a map to show, View does nothing.
 - Synthetic tests for identification, races, caching, scenes and gate transitions.
 
-Title isolation validated in game (rc6); the scene gate is not yet (rc7).
-See docs/TITLE-ISOLATION.md and docs/VALIDATION.md.
+Validated in game as internal rc7 (see docs/VALIDATION.md). Extra modes, Boss
+Rush and every in-game event are not individually validated; there View stays
+native Select. Dawn of Sorrow and Order of Ecclesia remain unsupported.
 
 ## 0.1.0 — 2026-10-24
 

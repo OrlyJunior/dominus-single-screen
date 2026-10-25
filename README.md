@@ -1,6 +1,6 @@
 # Dominus: Single Screen
 
-**v0.1.0 — source publication of the validated internal rc5 implementation.**
+**v0.1.1 — title isolation and gameplay-only map, validated in game (internal rc7).**
 A native C++ mod for **Castlevania Dominus Collection** on Steam/Windows x64,
 currently supporting **Castlevania: Portrait of Ruin** only.
 
@@ -12,6 +12,10 @@ currently supporting **Castlevania: Portrait of Ruin** only.
 - Native map-marker animation replay from captured game pixels, including safe
   cycle retention across stationary map reopenings and asynchronous pause release.
 - With the mod disabled, View is forwarded as native Select on release.
+- Acts only in Portrait of Ruin: the other collection games and the collection's
+  menus keep their original input and layout, with the mod on or off.
+- The enlarged map opens only during Portrait gameplay; on its title screen and
+  menus View stays native Select (View + Y still toggles the mod).
 - Separate D3D11 proxy files with a version gate and manifest-based installation/removal;
   original game executables, DLLs and data packages are not replaced.
 
@@ -22,7 +26,7 @@ The mod starts **off**. Load Portrait of Ruin and press View + Y.
 | Area | Status |
 | --- | --- |
 | Portrait of Ruin | Validated in gameplay with an Xbox-compatible controller through Steam Input |
-| Dawn of Sorrow / Order of Ecclesia / Haunted Castle | Unsupported. v0.1.0 still delays Select there even with the mod off (uninstall to play them); the unreleased v0.1.1 candidate leaves them original ([title isolation](docs/TITLE-ISOLATION.md), pending in-game validation) |
+| Dawn of Sorrow / Order of Ecclesia / Haunted Castle | Unsupported; the mod stays inert there and input is untouched ([title isolation](docs/TITLE-ISOLATION.md)). v0.1.0 users: update, since v0.1.0 delayed Select in those games |
 | Display | Validated at 1920x1080 and 2560x1440, 16:9 |
 | Collection layout | Gameplay left; map and Status stacked on the right |
 | Game executable | SHA-256 `E6FA885F560C8A47640FF8DF4DE3CE4A938C8053EB11A90A7B65F5EBF1AB6B64` |
@@ -44,7 +48,7 @@ under `%LOCALAPPDATA%/DominusSingleScreen`; detailed marker traces are off by de
 ## Build and use
 
 This repository contains **source only**. It does not provide game files,
-precompiled mods, a GitHub Release, or a downloader.
+precompiled binaries or a downloader; GitHub releases carry notes only.
 
 See [building and tests](docs/BUILD.md), [installation/removal](docs/INSTALL.md),
 [architecture](docs/ARCHITECTURE.md), and [validation](docs/VALIDATION.md).

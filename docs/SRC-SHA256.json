@@ -1,9 +1,9 @@
 {
-  "reference": "validated internal rc5 runtime/header/test sources",
+  "reference": "v0.1.1 runtime/header/test sources, validated in game as internal rc7",
   "files": [
     {
       "path": "src/core.cpp",
-      "sha256": "A8B20EB9C909C7B62AE39804A0D092167A49A1B13BEF468B16726C0886881F4C"
+      "sha256": "F088FB50A5149294D0711CACC9161AC7E006F23BFADB5B5ECDF2CD2FCD767EC1"
     },
     {
       "path": "src/d3d11.def",
@@ -19,7 +19,7 @@
     },
     {
       "path": "src/live_controller.cpp",
-      "sha256": "6FB9D001FE0145DB6F9C6543F63DB8367F8972FF1699E5B54E884E0BF27AB836"
+      "sha256": "EA895B9C29A67B824D900FCB4DEEB68F54414AE1E18BAC4DF26EEF5718F44C10"
     },
     {
       "path": "src/marker_blink.cpp",
@@ -46,8 +46,12 @@
       "sha256": "4AD6FF5312EB085A889C59BA5AFD4361413DEE2D747A942A201FA3921AD5D7FA"
     },
     {
+      "path": "src/title_identity.cpp",
+      "sha256": "57829DD90EB4A0BBE6AC0183A6637F38D770EC9E367063DD2BFAD39843680277"
+    },
+    {
       "path": "include/dominus/core.hpp",
-      "sha256": "838CB775A2E8FEDD4D5ED835DE68EA7C06F12032A647601729EB38A94409263B"
+      "sha256": "0188C0A5989CC5828E9CB0E282A42B465B1DA13FE7B580F2ED640CC3420ADA1A"
     },
     {
       "path": "include/dominus/graphics.hpp",
@@ -86,16 +90,20 @@
       "sha256": "65B85F41185C218F55D2DDC0B811BADD7B2DD822E47BFF30FFEEEFB6518405D8"
     },
     {
+      "path": "include/dominus/title_identity.hpp",
+      "sha256": "4563E91D15AA715E836446B469814979CE65D78F09C94C6640C1D901181FCC4B"
+    },
+    {
       "path": "tests/core_tests.cpp",
-      "sha256": "D53D2ED08ED7FEF80CD1497C2E996FAA177EC1F9B4B05CC20D8AB1CF6BECD4B9"
+      "sha256": "5C5B824D45F0899D7E3B9B5F108AAE519BD3D4D8B6AB0333EA8B0DD115227564"
     },
     {
       "path": "tests/d3d11_tests.cpp",
-      "sha256": "591A60703B9A76571CD1C64F4D85144E5A9B7C6A853FF1C9FD3D68F77E9EAE60"
+      "sha256": "0E4D99F5407A6C98B7C6C634F2C20486C4A4EF5CD32638EE508C82E6B2BFB512"
     },
     {
       "path": "tests/steam_pad_tests.cpp",
-      "sha256": "2B46F982A9091F100F7BABF8EFFBF953ED3ECF4227B5AA4C086A82760144DA90"
+      "sha256": "FD588753AB6D32CAAFFC01FB53FDD1A6666900BAA024425CC7485EA175F0C1BE"
     },
     {
       "path": "tests/test_inspect_build.py",
