@@ -58,3 +58,19 @@ function test is retained as opt-in and was not rerun during publication.
 A fresh Zig runtime cache emitted existing libunwind dllexport-redeclaration
 warnings, but compilation completed successfully. CMake/MSVC configuration and
 in-game tests were not rerun. The installed rc5 is preserved unchanged.
+
+## v0.1.1 candidate: title isolation (synthetic only)
+
+Built with Zig 0.13.0 (development build, not `-Release`) into `out/`. Core
+passed 46 groups (38 existing + 8 for identification, caching, races, transitions
+and gating); the Steam-pad test passed 9 groups against a local analysis copy,
+including every one of the 65,536 Steam action combinations forwarded unchanged
+through the real pad-builder code when the gate is inactive. The WARP host passed
+19 groups with `--proxy` against the new DLL (18 existing + the real Windows title
+platform failing closed in a non-game host); the unknown-process guard passed;
+Python passed 19 cases and the installer 11 fixtures with RealGameTouched=false.
+No compiler warnings came from project sources.
+
+Nothing was launched, attached to or installed: the title verdicts, the
+collection-menu pause assumption and RE-1b in [TITLE-ISOLATION.md](TITLE-ISOLATION.md)
+still need the real-test plan described there.

@@ -38,7 +38,7 @@ try {
     }
     $cpp = @('c++') + $common + @('-std=c++17','-fms-extensions','-Wall','-Wextra','-Iinclude')
     if (-not $TestsOnly) {
-        Invoke-Compiler ($cpp + $cIncludes + @('-shared','-static','src/proxy.cpp','src/graphics.cpp','src/core.cpp','src/native_runtime.cpp','src/render_capture.cpp','src/resource_observer.cpp','src/input_observer.cpp','src/live_controller.cpp','src/marker_blink.cpp','src/marker_identity.cpp','src/d3d11.def') + $objects + @('-lbcrypt','-luser32','-lgdi32','-lole32','-o',(Join-Path $BuildDirectory 'd3d11.dll')))
+        Invoke-Compiler ($cpp + $cIncludes + @('-shared','-static','src/proxy.cpp','src/graphics.cpp','src/core.cpp','src/native_runtime.cpp','src/render_capture.cpp','src/resource_observer.cpp','src/input_observer.cpp','src/live_controller.cpp','src/marker_blink.cpp','src/marker_identity.cpp','src/title_identity.cpp','src/d3d11.def') + $objects + @('-lbcrypt','-luser32','-lgdi32','-lole32','-o',(Join-Path $BuildDirectory 'd3d11.dll')))
     }
     Invoke-Compiler ($cpp + @('-static','src/core.cpp','tests/core_tests.cpp','-o',(Join-Path $BuildDirectory 'core_tests.exe')))
     # Runs real game code read at run time from a local analysis copy (argument).
@@ -47,7 +47,7 @@ try {
         Invoke-Compiler ($cpp + @('-static','-municode','tools/attach_observer.cpp','-o',(Join-Path $BuildDirectory 'attach_observer.exe')))
     }
     if (Test-Path -LiteralPath 'tests/d3d11_tests.cpp') {
-        Invoke-Compiler ($cpp + @('-static','src/core.cpp','src/graphics.cpp','src/marker_blink.cpp','src/marker_identity.cpp','tests/d3d11_tests.cpp','-lbcrypt','-luser32','-lgdi32','-lole32','-o',(Join-Path $BuildDirectory 'dominus_d3d11_tests.exe')))
+        Invoke-Compiler ($cpp + @('-static','src/core.cpp','src/graphics.cpp','src/marker_blink.cpp','src/marker_identity.cpp','src/title_identity.cpp','tests/d3d11_tests.cpp','-lbcrypt','-luser32','-lgdi32','-lole32','-o',(Join-Path $BuildDirectory 'dominus_d3d11_tests.exe')))
     }
     Copy-Item -LiteralPath 'dominus-single-screen.ini' -Destination (Join-Path $BuildDirectory 'dominus-single-screen.ini') -Force
     Write-Output "Build complete: $BuildDirectory"

@@ -11,6 +11,7 @@
 #include "dominus/core.hpp"
 #include "dominus/runtime_api.h"
 #include "dominus/marker_blink.hpp"
+#include "dominus/title_identity.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1067,6 +1068,18 @@ void marker_replay_test(Device& device,DXGI_FORMAT format) {
     run(50,-1,[&](ULONGLONG){return off.get();},nullptr,nullptr,nullptr);
 }
 
+// The real Windows title platform in a host that is not game.exe: no task at
+// the game's global, so Portrait is never reported, whatever task is claimed.
+void title_identity_fails_closed_outside_the_game() {
+    for(const std::uintptr_t task:{std::uintptr_t{0},std::uintptr_t{0x10000},reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr))}){
+        for(std::uint64_t epoch=0;epoch<3;++epoch){
+            const auto observed=dominus::title::observe(task,epoch);
+            require(!observed.portrait&&observed.reason==dominus::TitleReason::NoTask,"non-game host reports no EmuTask and no Portrait");
+        }
+    }
+    require(!GetModuleHandleW(L"dra02.dll"),"the check loaded no game module");
+}
+
 struct Runner {
     unsigned passed=0,failed=0;
     void run(const std::string& name,const std::function<void()>& body) {
@@ -1090,6 +1103,7 @@ int main(int argc,char** argv) {
             std::cout<<"Proxy result: "<<tests.passed<<" passed, "<<tests.failed<<" failed. No game or Steam execution.\n";
             return tests.failed?1:0;
         }
+        tests.run("title identity fails closed outside game.exe",[&]{title_identity_fails_closed_outside_the_game();});
         {
             Library d3d(system_dll(L"d3d11.dll"));
             Library compiler(system_dll(L"d3dcompiler_47.dll"));

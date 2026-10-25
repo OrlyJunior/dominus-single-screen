@@ -2,6 +2,7 @@
 #include "dominus/core.hpp"
 #include "dominus/native_runtime.hpp"
 #include "dominus/input_observer.hpp"
+#include "dominus/title_identity.hpp"
 #include <mutex>
 #include <string>
 #include <cstdio>
@@ -41,6 +42,11 @@ struct State {
     DWORD lastPoll=0;
     InputAction action=InputAction::None;
     InputRecognizer recognizer;
+    // Portrait features run only while title_identity verifies Portrait; the
+    // filter also stays out of pauses the mod does not own (collection menus).
+    PortraitGate gate;
+    bool identityActive=false,inputActive=false;
+    std::uint64_t titleGeneration=0;
     std::wstring directory;
     Log log=nullptr;
 };
@@ -49,6 +55,19 @@ void log(const char* name) noexcept {if(state().log)state().log(name);}
 void clear_release_tracking(State& s) noexcept {
     s.voluntaryClose=s.releaseConfirmed=false;
     s.releasedToken=s.releasedEpoch=0;
+}
+void update_gate(State& s,const TitleObservation& title,const native::Status& st) noexcept {
+    const auto gate=s.gate.update({title,st.pauseKnown,st.paused,s.token!=0||s.awaiting!=0||st.stalePause});
+    if(title.generation!=s.titleGeneration){
+        s.titleGeneration=title.generation;char line[220]{};
+        std::snprintf(line,sizeof(line),"title,portrait=%u,reason=%s,index=%d,ready=%u,module=0x%llx,epoch=%llu",unsigned(title.portrait),title_reason_name(title.reason),title.fields.index,unsigned(title.fields.ready),static_cast<unsigned long long>(title.fields.module),static_cast<unsigned long long>(title.taskEpoch));log(line);
+    }
+    if(gate.identityChanged)log(gate.identity?"live,title-gate,portrait-verified":"live,title-gate,portrait-lost");
+    // A gesture never spans a context change; the next activation starts from
+    // neutral (a View still held then is drained, never acted on).
+    if(gate.inputChanged){s.recognizer.reset();log(gate.input?"live,input-gate,active":"live,input-gate,passthrough");}
+    if(!gate.identity)s.replayUntil=0;
+    s.identityActive=gate.identity;s.inputActive=gate.input;
 }
 std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
     auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);
@@ -64,6 +83,13 @@ std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
         // pad and only unpauses on close what it found unpaused: drop our map
         // pause first, on this (pause) thread, or the game stays frozen.
         if(s.token&&native::release_owned_now()){s.token=0;s.map=false;log("live,controller-lost,map-pause-released-first");}
+    }
+    // Outside verified Portrait gameplay every button passes exactly as read:
+    // no View/Y reservation, delay or chord. Only a View pulse that Portrait
+    // already started may finish, and only while Portrait is still verified.
+    if(!s.inputActive){
+        if(s.replayUntil&&fromGame&&s.identityActive){if(GetTickCount64()<s.replayUntil)return static_cast<std::uint16_t>(raw.buttons|ButtonView);s.replayUntil=0;}
+        return raw.buttons;
     }
     InputSnapshot sample{raw.buttons,raw.connected,s.focused,s.connection};
     InputPolicy policy{true,s.enabled,s.mapAllowed,s.epoch};
@@ -137,6 +163,8 @@ gfx::Request frame(HWND window) noexcept {
     try {
         // Poll outside our state lock: the adapter invokes filter synchronously.
         input::on_present();auto st=native::status_snapshot();auto reply=native::pause_reply_snapshot();
+        // Outside our lock: the first sight of a loaded dra02.dll hashes it once.
+        const auto title=title::observe(st.taskObserved?st.task:0,st.taskEpoch);
         auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);if(!s.ready)return {};
         const auto foreground=GetForegroundWindow();s.focused=foreground==window||(foreground&&IsChild(window,foreground));
         s.epoch=st.taskEpoch;s.revision=st.pauseRevision;
@@ -160,6 +188,7 @@ gfx::Request frame(HWND window) noexcept {
             s.awaiting=0;
         }
         if(s.token&&st.ownedPauseToken!=s.token){s.token=0;s.map=false;clear_release_tracking(s);log("live,pause-ownership-lost");}
+        update_gate(s,title,st);
         const auto now=GetTickCount();bool releaseStale=false;
         if(now-s.lastPoll>=120&&!s.directory.empty()){
             s.lastPoll=now;const auto path=s.directory+L"\\control.ini";
@@ -168,6 +197,9 @@ gfx::Request frame(HWND window) noexcept {
                 if(command==1)s.action=InputAction::ToggleMap;else if(command==2)s.action=InputAction::ToggleMod;else if(command==3)releaseStale=true;
             }
         }
+        // Nothing requested while (or before) Portrait was verified applies to
+        // another title; an owned map pause is released below by close().
+        if(!s.identityActive){s.action=InputAction::None;releaseStale=false;}
         // Recovery for a pause the mod created that nothing owns any more (the
         // collection's menu stacked on it and closed without unpausing): an
         // explicit View, or control.ini Action=3, releases exactly that pause.
@@ -176,7 +208,7 @@ gfx::Request frame(HWND window) noexcept {
             clear_release_tracking(s);
             if(queue(native::PauseCommandKind::ReleaseStale))log("live,stale-mod-pause-release-requested");
         }
-        if(!s.focused||s.disconnected||!s.nativeReady||!s.enabled||(st.paused&&!s.token))close(false);
+        if(!s.identityActive||!s.focused||s.disconnected||!s.nativeReady||!s.enabled||(st.paused&&!s.token))close(false);
         if(s.action==InputAction::ToggleMod){s.enabled=!s.enabled;close(false);log(s.enabled?"live,mod-enabled":"live,mod-disabled");}
         else if(s.action==InputAction::ToggleMap&&s.enabled&&s.focused&&s.nativeReady&&!s.awaiting){
             if(s.map&&s.token)close(true);
@@ -186,7 +218,7 @@ gfx::Request frame(HWND window) noexcept {
         s.action=InputAction::None;
         if(s.choosing){if(st.paused)close(false);else finish_choice(GetTickCount64());}
         // A stale mod pause keeps View as a mod command so it can release it.
-        s.mapAllowed=s.enabled&&s.focused&&s.nativeReady&&(!st.paused||s.token||st.stalePause);
+        s.mapAllowed=s.identityActive&&s.enabled&&s.focused&&s.nativeReady&&(!st.paused||s.token||st.stalePause);
         const bool waitingRelease=s.awaiting!=0&&s.waitingKind==native::PauseCommandKind::Release;
         if(s.releaseConfirmed&&(st.paused||!st.pauseKnown||st.taskEpoch!=s.releasedEpoch))clear_release_tracking(s);
         if(waitingRelease&&st.taskEpoch!=s.releasedEpoch)clear_release_tracking(s);
@@ -199,7 +231,7 @@ gfx::Request frame(HWND window) noexcept {
         s.pauseContext.taskEpoch=st.taskEpoch;
         s.pauseContext.leaseToken=s.token?s.token:s.releasedToken;
         s.pauseContext.connectionEpoch=s.connection;
-        if(!s.enabled||!s.focused||!s.nativeReady||(st.paused&&!s.token))return {};
+        if(!s.identityActive||!s.enabled||!s.focused||!s.nativeReady||(st.paused&&!s.token))return {};
         // Exact preset observed in the current real Portrait session. The
         // original compositor still renders every screen; no game setting changes.
         if(s.map)return {gfx::Mode::Map,s.mapRect,false};

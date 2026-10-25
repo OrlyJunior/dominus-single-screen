@@ -1127,6 +1127,323 @@ void marker_cycle_single_lap_thirty_nine_tick_revisit_closure() {
     CHECK(closedOnTwo.valid && closedOnTwo.confidence == MarkerCycleConfidence::Complete);
     CHECK(closedOnTwo.count == 13 && closedOnTwo.periodTicks == 39 && transientZero.imageCount() == 14);
 }
+
+// Synthetic EmuTask/loader states only; no game memory or module is read.
+constexpr std::uintptr_t FakeTask = 0x10000, FakeVtable = 0x140512850;
+constexpr std::uintptr_t Dra01 = 0x7ff800000000, Dra02 = 0x7ff810000000, Dra02Elsewhere = 0x7ff820000000;
+
+struct FakeTitlePlatform final : ITitlePlatform {
+    bool taskAvailable = true, fieldsReadable = true, fileGood = true;
+    std::uintptr_t task = FakeTask;
+    EmuTaskTitleFields fields{FakeVtable, Dra02, PortraitModuleIndex, 1};
+    std::uintptr_t loaded = Dra02;
+    TitleModuleImage image{Dra02, 0x9c4000, 0x5f3a0000, true};
+    TitleFileKey key{0x9a7c465a, 0x60000000069e4f, 5056512, 0x01d9000000000000, true};
+    // Changes applied right after the N-th field read / module query (0: never).
+    unsigned changeFieldsAfterRead = 0, unloadAfterQuery = 0;
+    EmuTaskTitleFields changedFields{};
+    unsigned fieldReads = 0, moduleQueries = 0, imageQueries = 0, keyQueries = 0, verifyCalls = 0;
+
+    bool read_task(std::uintptr_t& out) noexcept override {
+        if (!taskAvailable) return false;
+        out = task;
+        return true;
+    }
+    bool read_fields(std::uintptr_t requested, EmuTaskTitleFields& out) noexcept override {
+        if (!fieldsReadable || requested != task) return false;
+        out = fields;
+        if (++fieldReads == changeFieldsAfterRead) fields = changedFields;
+        return true;
+    }
+    std::uintptr_t portrait_module() noexcept override {
+        const auto result = loaded;
+        if (++moduleQueries == unloadAfterQuery) loaded = 0;
+        return result;
+    }
+    TitleModuleImage module_image(std::uintptr_t handle) noexcept override {
+        ++imageQueries;
+        auto result = image;
+        result.handle = handle;
+        result.valid = image.valid && handle == image.handle;
+        return result;
+    }
+    TitleFileKey file_key(const TitleModuleImage&) noexcept override { ++keyQueries; return key; }
+    bool verify_file(const TitleModuleImage& checked, const TitleFileKey& checkedKey) noexcept override {
+        ++verifyCalls;
+        return fileGood && checked.valid && checkedKey.valid;
+    }
+    // EmuTask::loadEmuModuleNum's end state for one index.
+    void load(std::int32_t index, std::uintptr_t module) {
+        fields.index = index;
+        fields.module = module;
+        fields.ready = 1;
+        loaded = module == Dra02 || module == Dra02Elsewhere ? module : 0;
+        image.handle = loaded ? loaded : image.handle;
+    }
+};
+
+struct TitleFixture {
+    FakeTitlePlatform platform;
+    TitleDetector detector;
+    std::uint64_t epoch = 5, now = 1000;
+    TitleObservation update() { return detector.update(platform, FakeTask, epoch, now); }
+};
+
+void title_detector_never_verifies_boot_menus_or_other_titles() {
+    TitleFixture f;
+    f.platform.taskAvailable = false;
+    CHECK(!f.update().portrait && f.update().reason == TitleReason::NoTask);
+    f.platform.taskAvailable = true;
+    CHECK(f.detector.update(f.platform, 0, f.epoch, f.now).reason == TitleReason::TaskMismatch);
+    CHECK(f.detector.update(f.platform, FakeTask + 8, f.epoch, f.now).reason == TitleReason::TaskMismatch);
+    f.platform.fieldsReadable = false;
+    CHECK(f.update().reason == TitleReason::ReadFailed);
+    f.platform.fieldsReadable = true;
+    // Constructor state: no module and index -1, +0x184 clear.
+    f.platform.fields = {FakeVtable, 0, -1, 0};
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::NoModule);
+    // Boot reinitialization clamps -1 to 0 and loads dra01 behind the menu.
+    f.platform.load(0, Dra01);
+    auto observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::DawnOfSorrow);
+    f.platform.load(2, Dra01 + 0x1000000);
+    observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::OrderOfEcclesia);
+    f.platform.load(3, Dra01 + 0x2000000);
+    observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::Unknown);
+    f.platform.fields = {FakeVtable, Dra01, StaticModuleIndex, 1};
+    CHECK(f.update().reason == TitleReason::StaticModule);
+    f.platform.fields.index = 9;
+    CHECK(f.update().reason == TitleReason::OtherTitle);
+    // Even with dra02.dll still loaded, another index is never Portrait.
+    f.platform.fields = {FakeVtable, Dra02, 0, 1};
+    f.platform.loaded = Dra02;
+    CHECK(!f.update().portrait);
+    CHECK(f.platform.verifyCalls == 0);
+}
+
+void title_detector_requires_the_loaded_verified_dra02() {
+    TitleFixture f;
+    f.platform.fields.ready = 0;
+    CHECK(f.update().reason == TitleReason::Loading);
+    // setEmuModuleNum(1) before the reload: index 1, previous module, ready.
+    f.platform.fields = {FakeVtable, Dra01, PortraitModuleIndex, 1};
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.loaded = Dra02;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.fields.module = Dra02Elsewhere;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.fields.module = Dra02;
+    f.platform.image.valid = false;  // wrong path, not MEM_IMAGE or not a DLL
+    CHECK(f.update().reason == TitleReason::ModuleImage);
+    f.platform.image.valid = true;
+    f.platform.fileGood = false;
+    CHECK(f.update().reason == TitleReason::ModuleFile);
+    TitleFixture good;
+    const auto observed = good.update();
+    CHECK(observed.portrait && observed.reason == TitleReason::Verified);
+    CHECK(observed.indexed == Title::PortraitOfRuin && observed.fields.module == Dra02 && observed.taskEpoch == 5);
+}
+
+void title_detector_caches_file_checks_per_image_and_epoch() {
+    TitleFixture f;
+    CHECK(f.update().portrait);
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 1 && f.platform.imageQueries == 1);
+    for (int i = 0; i < 300; ++i) CHECK(f.update().portrait);
+    // Unchanged frames: two field reads and two module lookups, no file I/O.
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 1 && f.platform.imageQueries == 1);
+    CHECK(f.platform.fieldReads == 2 * 301 && f.platform.moduleQueries == 2 * 301);
+    // A new task epoch re-checks the image and the cheap file identity only.
+    ++f.epoch;
+    CHECK(f.update().portrait);
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 2 && f.platform.imageQueries == 2);
+    // The file changed on disk: hashed again and refused.
+    ++f.epoch;
+    f.platform.key.written += 1;
+    f.platform.fileGood = false;
+    CHECK(f.update().reason == TitleReason::ModuleFile && f.platform.verifyCalls == 2);
+    // Failed checks retry at most MaxFileAttempts times per epoch, spaced out.
+    for (int i = 0; i < 10; ++i) CHECK(!f.update().portrait);
+    CHECK(f.platform.verifyCalls == 2);
+    f.now += TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 3);
+    f.now += TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 4);
+    f.now += 10 * TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 4);
+    // A transient failure recovers on a later attempt.
+    ++f.epoch;
+    f.platform.fileGood = true;
+    CHECK(f.update().portrait && f.platform.verifyCalls == 5);
+    // A reload at another base is a new image: hashed once more.
+    f.platform.load(PortraitModuleIndex, Dra02Elsewhere);
+    CHECK(f.update().portrait && f.platform.verifyCalls == 6);
+    CHECK(f.detector.verifications() == 6);
+}
+
+void title_detector_rejects_races_and_unloads() {
+    TitleFixture f;
+    CHECK(f.update().portrait);
+    // +0x184 cleared by a load starting between the two reads.
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.ready = 0;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    CHECK(f.update().reason == TitleReason::Loading);
+    f.platform.fields.ready = 1;
+    CHECK(f.update().portrait);
+    // +0x528 and vtable changes between the reads.
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.module = Dra01;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    f.platform.fields.module = Dra02;
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.vtable = FakeVtable + 0x10;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    f.platform.fields.vtable = FakeVtable;
+    CHECK(f.update().portrait);
+    // dra02.dll unloaded between the module checks, then gone.
+    f.platform.unloadAfterQuery = f.platform.moduleQueries + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    // The fast path never skips the module identity of a later frame.
+    f.platform.loaded = Dra02;
+    CHECK(f.update().portrait);
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+}
+
+void title_detector_follows_portrait_dawn_portrait_transitions() {
+    TitleFixture f;
+    std::vector<std::uint64_t> generations;
+    const auto expect = [&](bool portrait, TitleReason reason) {
+        const auto observed = f.update();
+        CHECK(observed.portrait == portrait && observed.reason == reason);
+        CHECK(f.update().generation == observed.generation);  // stable while unchanged
+        CHECK(generations.empty() || observed.generation > generations.back());
+        generations.push_back(observed.generation);
+    };
+    expect(true, TitleReason::Verified);
+    f.platform.fields.index = 0;                     // menu: setEmuModuleNum(0)
+    expect(false, TitleReason::OtherTitle);
+    ++f.epoch;                                       // reinitialize
+    f.platform.fields.ready = 0;                     // loadEmuModuleNum starts
+    expect(false, TitleReason::OtherTitle);
+    f.platform.load(0, Dra01);                       // Dawn of Sorrow running
+    expect(false, TitleReason::OtherTitle);
+    f.platform.fields.index = PortraitModuleIndex;   // menu: setEmuModuleNum(1)
+    expect(false, TitleReason::ModuleMismatch);
+    ++f.epoch;
+    f.platform.fields.ready = 0;
+    expect(false, TitleReason::Loading);
+    f.platform.load(PortraitModuleIndex, Dra02);     // Portrait again, same image
+    expect(true, TitleReason::Verified);
+    ++f.epoch;                                       // task reinitialized in place
+    expect(true, TitleReason::Verified);
+    CHECK(f.platform.verifyCalls == 1);
+}
+
+void portrait_gate_confirms_identity_and_revokes_at_once() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    portrait.taskEpoch = 7;
+    PortraitGateInput input{portrait, true, false, false};
+    TitleObservation other = portrait;
+    other.portrait = false;
+    other.reason = TitleReason::OtherTitle;
+    auto state = gate.update({other, true, false, false});
+    CHECK(!state.identity && !state.input && !state.identityChanged);
+    state = gate.update(input);
+    CHECK(!state.identity && !state.input);
+    state = gate.update(input);
+    CHECK(state.identity && state.input && state.identityChanged && state.inputChanged);
+    state = gate.update(input);
+    CHECK(state.identity && !state.identityChanged && !state.inputChanged);
+    // Any unverified observation revokes immediately.
+    state = gate.update({other, true, false, false});
+    CHECK(!state.identity && !state.input && state.identityChanged && state.inputChanged);
+    // A new module or task epoch needs fresh confirmations.
+    gate.update(input);
+    CHECK(gate.update(input).identity);
+    input.title.fields.module = Dra02Elsewhere;
+    CHECK(!gate.update(input).identity);
+    CHECK(gate.update(input).identity);
+    input.title.taskEpoch = 8;
+    CHECK(!gate.update(input).identity);
+    CHECK(gate.update(input).identity);
+    gate.reset();
+    CHECK(!gate.identity() && !gate.input());
+}
+
+void portrait_gate_keeps_input_out_of_foreign_pauses() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    gate.update({portrait, true, false, false});
+    CHECK(gate.update({portrait, true, false, false}).input);
+    // The collection's menus pause the EmuTask: original input, Portrait kept.
+    auto state = gate.update({portrait, true, true, false});
+    CHECK(state.identity && !state.input && state.inputChanged && !state.identityChanged);
+    // The mod's own map pause, request in flight or stale pause keep it.
+    CHECK(gate.update({portrait, true, true, true}).input);
+    CHECK(!gate.update({portrait, false, false, true}).input);  // pause unknown
+    CHECK(gate.update({portrait, true, false, false}).input);
+    TitleObservation lost = portrait;
+    lost.portrait = false;
+    lost.reason = TitleReason::Loading;
+    CHECK(!gate.update({lost, true, false, true}).input);
+}
+
+// Mirrors live_controller: a gate change resets the recognizer, the inactive
+// filter forwards the raw word, and a View held across reactivation drains.
+void gate_changes_never_carry_a_gesture_across_contexts() {
+    PortraitGate gate;
+    InputRecognizer recognizer;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    const InputPolicy policy{true, true, true, 1};
+    InputSnapshot sample{};
+    const auto filter = [&](std::uint16_t buttons, bool paused) {
+        const auto state = gate.update({portrait, true, paused, false});
+        if (state.inputChanged) recognizer.reset();
+        sample.buttons = buttons;
+        if (!state.input) return InputResult{buttons, 0, InputAction::None, false, false};
+        return recognizer.update(sample, policy);
+    };
+    filter(0, false);
+    CHECK(filter(0, false).forwardedButtons == 0);
+    CHECK(filter(ButtonView, false).forwardedButtons == 0);          // pending in Portrait
+    // The collection menu pauses mid-gesture: the raw word passes unchanged.
+    CHECK(filter(ButtonView | ButtonY, true).forwardedButtons == (ButtonView | ButtonY));
+    CHECK(filter(ButtonView, true).forwardedButtons == ButtonView);
+    // Back in gameplay with View still held: drained, no map or mod toggle.
+    auto result = filter(ButtonView, false);
+    CHECK(result.forwardedButtons == 0 && result.action == InputAction::None);
+    result = filter(0, false);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    CHECK(filter(ButtonView, false).forwardedButtons == 0);
+    CHECK(filter(0, false).action == InputAction::ToggleMap);
+    // Title lost: every combination is forwarded exactly.
+    portrait.portrait = false;
+    portrait.reason = TitleReason::OtherTitle;
+    for (std::uint32_t buttons = 0; buttons <= 0xffff; ++buttons) {
+        const auto raw = static_cast<std::uint16_t>(buttons);
+        result = filter(raw, buttons % 3 == 0);
+        CHECK(result.forwardedButtons == raw && result.action == InputAction::None && !result.delayedViewPulse);
+    }
+}
 }
 
 int main() {
@@ -1170,6 +1487,14 @@ int main() {
         {"coordinator_pause_failure_and_external_changes", coordinator_pause_failure_and_external_changes},
         {"coordinator_focus_reconnect_release_pending_and_shutdown", coordinator_focus_reconnect_release_pending_and_shutdown},
         {"coordinator_shared_profiles_never_imply_support", coordinator_shared_profiles_never_imply_support},
+        {"title_detector_never_verifies_boot_menus_or_other_titles", title_detector_never_verifies_boot_menus_or_other_titles},
+        {"title_detector_requires_the_loaded_verified_dra02", title_detector_requires_the_loaded_verified_dra02},
+        {"title_detector_caches_file_checks_per_image_and_epoch", title_detector_caches_file_checks_per_image_and_epoch},
+        {"title_detector_rejects_races_and_unloads", title_detector_rejects_races_and_unloads},
+        {"title_detector_follows_portrait_dawn_portrait_transitions", title_detector_follows_portrait_dawn_portrait_transitions},
+        {"portrait_gate_confirms_identity_and_revokes_at_once", portrait_gate_confirms_identity_and_revokes_at_once},
+        {"portrait_gate_keeps_input_out_of_foreign_pauses", portrait_gate_keeps_input_out_of_foreign_pauses},
+        {"gate_changes_never_carry_a_gesture_across_contexts", gate_changes_never_carry_a_gesture_across_contexts},
     };
     int failures = 0;
     for (const auto& test : tests) {

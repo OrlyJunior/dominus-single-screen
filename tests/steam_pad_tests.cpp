@@ -236,6 +236,27 @@ void non_steam_paths_and_disconnects_are_untouched() {
     connect(OtherController);
     CHECK(abiFaults == 0);
 }
+// What the live filter returns outside verified Portrait gameplay (v0.1.1).
+unsigned inactiveCalls = 0;
+std::uint16_t inactive_gate(const input::Snapshot& raw, bool) noexcept { ++inactiveCalls; return raw.buttons; }
+void inactive_title_gate_forwards_every_action_combination_unchanged() {
+    // The tracked identity is still OtherController from the previous test.
+    input::set_filter(nullptr);
+    poll(0);
+    std::vector<Pad> original(1u << Count);
+    for (std::uint32_t buttons = 0; buttons < (1u << Count); ++buttons) original[buttons] = poll(buttons);
+    inactiveCalls = 0;
+    input::set_filter(inactive_gate);
+    for (std::uint32_t buttons = 0; buttons < (1u << Count); ++buttons) {
+        const auto filtered = poll(buttons);
+        CHECK(filtered.slot == original[buttons].slot && filtered.buttons == original[buttons].buttons);
+        CHECK(filtered.leftTrigger == original[buttons].leftTrigger && filtered.packet == original[buttons].packet);
+    }
+    CHECK(inactiveCalls == (1u << Count));
+    CHECK(poll(bit(Select)).buttons == ButtonView && poll(bit(Select) | bit(Y)).buttons == (ButtonView | ButtonY));
+    input::set_filter(nullptr);
+    CHECK(abiFaults == 0);
+}
 void shutdown_restores_original_code_path() {
     input::shutdown();
     CHECK(poll(bit(Select) | bit(Y)).buttons == (ButtonView | ButtonY));
@@ -255,6 +276,7 @@ int main(int argc, char** argv) {
         {"disabled_mod_replays_view_once", disabled_mod_replays_view_once},
         {"every_pad_slot_of_one_controller_is_filtered_once", every_pad_slot_of_one_controller_is_filtered_once},
         {"non_steam_paths_and_disconnects_are_untouched", non_steam_paths_and_disconnects_are_untouched},
+        {"inactive_title_gate_forwards_every_action_combination_unchanged", inactive_title_gate_forwards_every_action_combination_unchanged},
         {"shutdown_restores_original_code_path", shutdown_restores_original_code_path},
     };
     int failures = 0;

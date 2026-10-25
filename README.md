@@ -22,7 +22,7 @@ The mod starts **off**. Load Portrait of Ruin and press View + Y.
 | Area | Status |
 | --- | --- |
 | Portrait of Ruin | Validated in gameplay with an Xbox-compatible controller through Steam Input |
-| Dawn of Sorrow / Order of Ecclesia / Haunted Castle | Unsupported; keep the mod off |
+| Dawn of Sorrow / Order of Ecclesia / Haunted Castle | Unsupported. v0.1.0 still delays Select there even with the mod off (uninstall to play them); the unreleased v0.1.1 candidate leaves them original ([title isolation](docs/TITLE-ISOLATION.md), pending in-game validation) |
 | Display | Validated at 1920x1080 and 2560x1440, 16:9 |
 | Collection layout | Gameplay left; map and Status stacked on the right |
 | Game executable | SHA-256 `E6FA885F560C8A47640FF8DF4DE3CE4A938C8053EB11A90A7B65F5EBF1AB6B64` |

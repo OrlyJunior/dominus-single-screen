@@ -407,4 +407,138 @@ private:
     std::uint64_t connectionEpoch_ = 0;
 };
 
+// Which title the collection's EmuTask has loaded (game.exe E6FA885F...6B64,
+// REA/Ghidra 12.1.4; docs/TITLE-ISOLATION.md). EmuTask::loadEmuModuleNum
+// (0x1400299d0) frees the module in +0x528, clears +0x184, stores
+// LoadLibraryA(dra01/dra02/dra03/ac_dracula.dll[index]) there and, once the
+// module's m2epi_moduledata export has initialized, writes the index to +0x53c
+// and sets +0x184. The script setter setEmuModuleNum (0x140029bf0) writes +0x53c
+// alone before the reload, so the index by itself never proves the title. The
+// constructors start with module 0, index -1 and +0x184 clear; index 4 is the
+// collection's static module, which loads no DLL.
+struct EmuTaskTitleFields {
+    std::uintptr_t vtable = 0;
+    std::uintptr_t module = 0;  // +0x528
+    std::int32_t index = -1;    // +0x53c
+    std::uint8_t ready = 0;     // +0x184
+};
+inline constexpr std::int32_t PortraitModuleIndex = 1;
+inline constexpr std::int32_t StaticModuleIndex = 4;
+
+// A loaded module as the platform sees it. Valid only for a MEM_IMAGE x64 DLL
+// mapped at handle whose path is dra02.dll in the game.exe directory.
+struct TitleModuleImage {
+    std::uintptr_t handle = 0;
+    std::uint32_t imageSize = 0;
+    std::uint32_t timestamp = 0;
+    bool valid = false;
+};
+// Identity of that file on disk (volume, file id, size, last write time).
+struct TitleFileKey {
+    std::uint64_t volume = 0, file = 0, size = 0, written = 0;
+    bool valid = false;
+};
+
+// Read-only platform access. Implementations never call game code, load or pin
+// a module, or write game memory; any failed read is reported, not guessed.
+class ITitlePlatform {
+public:
+    virtual ~ITitlePlatform() = default;
+    // The EmuTask published at game.exe+0x599FD0 with the derived vtable.
+    virtual bool read_task(std::uintptr_t& task) noexcept = 0;
+    virtual bool read_fields(std::uintptr_t task, EmuTaskTitleFields& fields) noexcept = 0;
+    // The currently loaded dra02.dll, 0 if none.
+    virtual std::uintptr_t portrait_module() noexcept = 0;
+    virtual TitleModuleImage module_image(std::uintptr_t handle) noexcept = 0;
+    virtual TitleFileKey file_key(const TitleModuleImage& image) noexcept = 0;
+    // Expensive: the whole file's SHA-256 and PE identity against image, with
+    // the file identity unchanged (key) before and after reading it.
+    virtual bool verify_file(const TitleModuleImage& image, const TitleFileKey& key) noexcept = 0;
+};
+
+enum class TitleReason {
+    Verified, NoTask, TaskMismatch, ReadFailed, NoModule, OtherTitle, StaticModule,
+    Loading, ModuleMismatch, ModuleImage, ModuleFile, Inconsistent
+};
+const char* title_reason_name(TitleReason reason) noexcept;
+
+struct TitleObservation {
+    // The only verdict that enables anything Portrait-specific.
+    bool portrait = false;
+    TitleReason reason = TitleReason::NoTask;
+    // What +0x53c names (0 dra01, 1 dra02, 2 dra03). Diagnostic, never proof.
+    Title indexed = Title::Unknown;
+    EmuTaskTitleFields fields{};
+    std::uint64_t taskEpoch = 0;
+    // Changes whenever the verdict, reason, fields or task epoch change.
+    std::uint64_t generation = 0;
+};
+
+// Fail-closed identification, once per Present. Portrait requires the native
+// observers' task, index 1 with +0x184 set, +0x528 equal to the loaded
+// dra02.dll, that module's image/path, its file hash, and an identical second
+// read of the fields bracketing those checks. While nothing changes, a frame
+// costs two field reads and a module lookup: the file is hashed once per
+// loaded image, its cheap file identity is re-checked on each new task epoch,
+// and a failed verification is retried at most MaxFileAttempts times per epoch.
+class TitleDetector {
+public:
+    static constexpr unsigned MaxFileAttempts = 3;
+    static constexpr std::uint64_t FileRetryMs = 5000;
+    // observedTask: the task the native observers validated (0 if none).
+    TitleObservation update(ITitlePlatform& platform, std::uintptr_t observedTask,
+                            std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept;
+    void reset() noexcept { *this = TitleDetector{}; }
+    // File hashes attempted so far (diagnostic and tests).
+    unsigned verifications() const noexcept { return verifications_; }
+
+private:
+    bool file_verified(ITitlePlatform& platform, const TitleModuleImage& image,
+                       std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept;
+    TitleObservation last_{};
+    bool haveLast_ = false;
+    bool fastValid_ = false;
+    std::uintptr_t fastTask_ = 0, fastHandle_ = 0;
+    std::uint64_t fastEpoch_ = 0;
+    EmuTaskTitleFields fastFields_{};
+    TitleModuleImage image_{};
+    TitleFileKey key_{};
+    bool haveImage_ = false, fileOk_ = false;
+    std::uint64_t keyEpoch_ = 0, retryAtMs_ = 0;
+    unsigned attempts_ = 0, verifications_ = 0;
+};
+
+struct PortraitGateInput {
+    TitleObservation title{};
+    bool pauseKnown = false;
+    bool paused = false;
+    // The mod owns the pause, has a pause request in flight, or left a stale
+    // pause that only it may release (native::Status::stalePause).
+    bool modPause = false;
+};
+struct PortraitGateState {
+    bool identity = false;  // Portrait-specific presentation, map, pause and marker may run
+    bool input = false;     // the input filter may reserve, delay or chord View/Y
+    bool identityChanged = false;
+    bool inputChanged = false;
+};
+// Identity needs Confirmations consecutive verified observations of the same
+// module and task epoch; anything else revokes it at once. Input additionally
+// needs a known pause state that is either clear or the mod's own, so the
+// collection's menus (which pause the EmuTask) receive their original input.
+class PortraitGate {
+public:
+    static constexpr unsigned Confirmations = 2;
+    PortraitGateState update(const PortraitGateInput& input) noexcept;
+    void reset() noexcept { *this = PortraitGate{}; }
+    bool identity() const noexcept { return identity_; }
+    bool input() const noexcept { return input_; }
+
+private:
+    unsigned streak_ = 0;
+    std::uintptr_t module_ = 0;
+    std::uint64_t epoch_ = 0;
+    bool identity_ = false, input_ = false;
+};
+
 } // namespace dominus

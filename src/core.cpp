@@ -726,4 +726,146 @@ FrameResult ModController::update(const InputSnapshot& input, const RuntimeSnaps
     return result;
 }
 
+namespace {
+
+bool same_fields(const EmuTaskTitleFields& a, const EmuTaskTitleFields& b) noexcept {
+    return a.vtable == b.vtable && a.module == b.module && a.index == b.index && a.ready == b.ready;
+}
+
+bool same_image(const TitleModuleImage& a, const TitleModuleImage& b) noexcept {
+    return a.handle == b.handle && a.imageSize == b.imageSize && a.timestamp == b.timestamp;
+}
+
+bool same_key(const TitleFileKey& a, const TitleFileKey& b) noexcept {
+    return a.valid && b.valid && a.volume == b.volume && a.file == b.file && a.size == b.size &&
+           a.written == b.written;
+}
+
+// Module table 0x14027def8 and the per-title save names (dra0N_data_*):
+// a naming fact only. Of these, only Portrait has been validated in gameplay.
+Title indexed_title(std::int32_t index) noexcept {
+    switch (index) {
+        case 0: return Title::DawnOfSorrow;
+        case 1: return Title::PortraitOfRuin;
+        case 2: return Title::OrderOfEcclesia;
+        default: return Title::Unknown;
+    }
+}
+
+} // namespace
+
+const char* title_reason_name(TitleReason reason) noexcept {
+    switch (reason) {
+        case TitleReason::Verified: return "verified";
+        case TitleReason::NoTask: return "no-task";
+        case TitleReason::TaskMismatch: return "task-mismatch";
+        case TitleReason::ReadFailed: return "read-failed";
+        case TitleReason::NoModule: return "no-module";
+        case TitleReason::OtherTitle: return "other-title";
+        case TitleReason::StaticModule: return "static-module";
+        case TitleReason::Loading: return "loading";
+        case TitleReason::ModuleMismatch: return "module-mismatch";
+        case TitleReason::ModuleImage: return "module-image";
+        case TitleReason::ModuleFile: return "module-file";
+        case TitleReason::Inconsistent: return "inconsistent";
+    }
+    return "unknown";
+}
+
+TitleObservation TitleDetector::update(ITitlePlatform& platform, std::uintptr_t observedTask,
+                                       std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept {
+    TitleObservation next{};
+    next.taskEpoch = taskEpoch;
+    const auto finish = [&](TitleReason reason) {
+        next.reason = reason;
+        next.portrait = reason == TitleReason::Verified;
+        if (!next.portrait) fastValid_ = false;
+        const bool changed = !haveLast_ || last_.portrait != next.portrait || last_.reason != next.reason ||
+                             !same_fields(last_.fields, next.fields) || last_.taskEpoch != next.taskEpoch;
+        next.generation = last_.generation + (changed ? 1 : 0);
+        last_ = next;
+        haveLast_ = true;
+        return next;
+    };
+
+    std::uintptr_t task = 0;
+    if (!platform.read_task(task) || !task) return finish(TitleReason::NoTask);
+    // The task whose lifecycle epoch and pause the native observers track.
+    if (task != observedTask) return finish(TitleReason::TaskMismatch);
+    EmuTaskTitleFields first{};
+    if (!platform.read_fields(task, first)) return finish(TitleReason::ReadFailed);
+    next.fields = first;
+    next.indexed = indexed_title(first.index);
+    if (first.index == StaticModuleIndex) return finish(TitleReason::StaticModule);
+    if (first.index < 0) return finish(TitleReason::NoModule);
+    if (first.index != PortraitModuleIndex) return finish(TitleReason::OtherTitle);
+    if (!first.ready) return finish(TitleReason::Loading);
+    const auto handle = platform.portrait_module();
+    // Also rejects setEmuModuleNum(1) still pointing at the previous module.
+    if (!handle || handle != first.module) return finish(TitleReason::ModuleMismatch);
+    const bool unchanged = fastValid_ && fastTask_ == task && fastHandle_ == handle &&
+                           fastEpoch_ == taskEpoch && same_fields(fastFields_, first);
+    if (!unchanged) {
+        const auto image = platform.module_image(handle);
+        if (!image.valid || image.handle != handle) return finish(TitleReason::ModuleImage);
+        if (!file_verified(platform, image, taskEpoch, nowMs)) return finish(TitleReason::ModuleFile);
+    }
+    // A load/unload racing these checks changes +0x184, +0x528 or the module.
+    EmuTaskTitleFields second{};
+    if (!platform.read_fields(task, second) || !same_fields(first, second) ||
+        platform.portrait_module() != handle) {
+        return finish(TitleReason::Inconsistent);
+    }
+    fastValid_ = true;
+    fastTask_ = task;
+    fastHandle_ = handle;
+    fastEpoch_ = taskEpoch;
+    fastFields_ = first;
+    return finish(TitleReason::Verified);
+}
+
+bool TitleDetector::file_verified(ITitlePlatform& platform, const TitleModuleImage& image,
+                                  std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept {
+    const bool sameImage = haveImage_ && same_image(image_, image);
+    const bool sameEpoch = sameImage && keyEpoch_ == taskEpoch;
+    if (sameEpoch && fileOk_) return true;
+    if (sameEpoch && (attempts_ >= MaxFileAttempts || nowMs < retryAtMs_)) return false;
+    if (!sameEpoch) attempts_ = 0;
+    const auto key = platform.file_key(image);
+    // A new task epoch re-checks only the cheap identity of an image already
+    // verified; its content is hashed again only if that identity changed.
+    if (sameImage && fileOk_ && same_key(key, key_)) {
+        keyEpoch_ = taskEpoch;
+        return true;
+    }
+    image_ = image;
+    haveImage_ = true;
+    key_ = key;
+    keyEpoch_ = taskEpoch;
+    ++attempts_;
+    ++verifications_;
+    fileOk_ = key.valid && platform.verify_file(image, key);
+    retryAtMs_ = fileOk_ ? 0 : nowMs + FileRetryMs;
+    return fileOk_;
+}
+
+PortraitGateState PortraitGate::update(const PortraitGateInput& input) noexcept {
+    if (input.title.portrait) {
+        if (streak_ && (module_ != input.title.fields.module || epoch_ != input.title.taskEpoch)) streak_ = 0;
+        if (streak_ < Confirmations) ++streak_;
+        module_ = input.title.fields.module;
+        epoch_ = input.title.taskEpoch;
+    } else {
+        streak_ = 0;
+    }
+    PortraitGateState state{};
+    state.identity = streak_ >= Confirmations;
+    state.input = state.identity && input.pauseKnown && (!input.paused || input.modPause);
+    state.identityChanged = state.identity != identity_;
+    state.inputChanged = state.input != input_;
+    identity_ = state.identity;
+    input_ = state.input;
+    return state;
+}
+
 } // namespace dominus

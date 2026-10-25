@@ -11,6 +11,17 @@ private copy, draws point-filtered 4:3 gameplay/map and clears unused space blac
 It restores the relevant D3D11 state and refuses unsupported states/resources.
 This is not a general layout detector or a replacement for every D3D11 wrapper.
 
+## Title isolation (v0.1.1 candidate)
+
+The common game.exe hosts every collection title, so the version gate alone
+does not identify Portrait. title_identity reads the EmuTask's module index,
+loaded HMODULE and ready flag twice per Present and accepts Portrait only for
+the exact dra02.dll loaded from the game directory (hash cached per image and
+re-checked on new task epochs). PortraitGate turns presentation, map, pause
+commands and marker tracking on after two consecutive verified frames and off at
+once; the input filter additionally stays out of pauses the mod does not own.
+Outside that context buttons pass unchanged. See [TITLE-ISOLATION.md](TITLE-ISOLATION.md).
+
 ## Input and native pause
 
 The tested controller reaches the game through Steam Input, so input_observer
@@ -57,7 +68,7 @@ no game state is written by this provider.
 ## Ownership and extension boundaries
 
 Runtime code is split among core, graphics, input_observer, native_runtime,
-live_controller, marker_blink and marker_identity. render_capture and
+live_controller, marker_blink, marker_identity and title_identity. render_capture and
 resource_observer are optional diagnostics, not requirements for normal playback.
 The RenderDoc adapter has its own opt-in/version/path checks and ships no tool DLL.
 
