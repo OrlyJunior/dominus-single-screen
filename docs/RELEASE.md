@@ -1,15 +1,28 @@
-# v0.1.0 source publication
+# Releases
 
-The v0.1.0 annotated Git tag identifies the initial source commit based on the
-validated internal rc5 implementation. It is not a GitHub Release and contains
-no precompiled binaries. Internal rc3/rc4/rc5 archives remain local references.
+## v0.1.1
 
-Before committing/pushing: review the exact index/tree, verify licenses, scan
-all blobs for private content/proprietary artifacts, run available source-only
-checks, and ensure origin is the intended private repository with no conflicting
-history. Do not rewrite history, force-push, or upload private diagnostics.
+The v0.1.1 annotated tag marks the merge of the title-isolation and
+gameplay-only map changes, validated in game as internal rc7 (VALIDATION.md).
+The GitHub release carries notes only: no precompiled binaries are attached or
+committed. End-user packages are built locally with `scripts/Package-Release.ps1`
+from the validated build and distributed separately; their DLL SHA-256 is
+recorded in VALIDATION.md.
 
-For continued development, work in this checkout and a separate out/build folder.
+## v0.1.0
+
+The v0.1.0 annotated tag identifies the initial source commit based on the
+validated internal rc5 implementation, with no GitHub release or binaries.
+Internal rc3/rc4/rc5/rc6/rc7 archives remain local references.
+
+## Before publishing
+
+Review the exact index/tree, verify licenses, scan all blobs for private content
+and proprietary artifacts, run the source-only checks, and ensure the history
+contains only the intended commits. Do not rewrite history, force-push, or upload
+private diagnostics. Changes reach `main` through a pull request.
+
+For continued development, work in this checkout and a separate out/ folder.
 Nothing changes an installed mod until a distinct, explicitly authorized install
 step. Keep validated builds and progress backups outside Git and the Steam folder.
 See BUILD.md, INSTALL.md, VALIDATION.md and PUBLICATION.md.

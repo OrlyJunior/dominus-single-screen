@@ -58,3 +58,37 @@ function test is retained as opt-in and was not rerun during publication.
 A fresh Zig runtime cache emitted existing libunwind dllexport-redeclaration
 warnings, but compilation completed successfully. CMake/MSVC configuration and
 in-game tests were not rerun. The installed rc5 is preserved unchanged.
+
+## v0.1.1 (validated as internal rc7, 2026-10-25)
+
+Reference v0.1.1 DLL SHA-256 (Zig 0.13.0 `-Release`; identifier only):
+`B9438FB55D39FCF531C0679F1A56EC17A810197166AC85402D5D58AC87B729E2`.
+The runtime sources match [SRC-SHA256.json](SRC-SHA256.json).
+
+Synthetic: core 50 groups (identification, races, caching, scenes, map commands,
+gate transitions), Steam pad 9 (all 65,536 Steam action combinations forwarded
+unchanged through the real pad-builder code when the gate is inactive), WARP with
+`--proxy` 19 (the real title platform fails closed in a non-game host), guard 1,
+Python 19, installer 11 fixtures with RealGameTouched=false.
+
+In game, installed with the repository scripts over a verified private backup
+(private logs, not distributed):
+
+- an intermediate build with only the title gate (internal rc6) confirmed the
+  isolation: start-up menu `other-title` (dra01), Portrait verified after a
+  `module-mismatch` while the new index preceded the reload, the collection menu
+  passing input unchanged, Order of Ecclesia and Dawn of Sorrow `other-title` with
+  no filtered input; it also showed the defect fixed in rc7 (View on Portrait's
+  title screen opened the enlarged graveyard image);
+- rc7 session: Konami logo, title (pages 6/3) and start menu (page 4) were
+  classified as non-gameplay with the mod on, and no map opened there; gameplay
+  reported `mapReady` only on stable map/Status pages (native Select switches
+  were seen as not ready); 8 map openings with native pause, all 8 pauses
+  released; the in-game menu (Talk) kept View native; brief gameplay sub-state
+  changes were not ready; Order of Ecclesia stayed `other-title`;
+- progress: only the collection's automatic `*_008_*`, `savecfg.txt` and
+  `remotecache.vdf` changed; game saves unchanged, nothing removed; installed and
+  original game files verified afterwards.
+
+Not validated individually: extra modes, Boss Rush, endings, Haunted Castle
+(not visited in the logged sessions), and every in-game dialogue or event.

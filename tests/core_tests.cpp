@@ -1127,6 +1127,485 @@ void marker_cycle_single_lap_thirty_nine_tick_revisit_closure() {
     CHECK(closedOnTwo.valid && closedOnTwo.confidence == MarkerCycleConfidence::Complete);
     CHECK(closedOnTwo.count == 13 && closedOnTwo.periodTicks == 39 && transientZero.imageCount() == 14);
 }
+
+// Synthetic EmuTask/loader states only; no game memory or module is read.
+constexpr std::uintptr_t FakeTask = 0x10000, FakeVtable = 0x140512850;
+constexpr std::uintptr_t Dra01 = 0x7ff800000000, Dra02 = 0x7ff810000000, Dra02Elsewhere = 0x7ff820000000;
+
+struct FakeTitlePlatform final : ITitlePlatform {
+    bool taskAvailable = true, fieldsReadable = true, fileGood = true;
+    std::uintptr_t task = FakeTask;
+    EmuTaskTitleFields fields{FakeVtable, Dra02, PortraitModuleIndex, 1};
+    std::uintptr_t loaded = Dra02;
+    TitleModuleImage image{Dra02, 0x9c4000, 0x5f3a0000, true};
+    TitleFileKey key{0x9a7c465a, 0x60000000069e4f, 5056512, 0x01d9000000000000, true};
+    // Changes applied right after the N-th field read / module query (0: never).
+    unsigned changeFieldsAfterRead = 0, unloadAfterQuery = 0;
+    EmuTaskTitleFields changedFields{};
+    unsigned fieldReads = 0, moduleQueries = 0, imageQueries = 0, keyQueries = 0, verifyCalls = 0;
+
+    bool read_task(std::uintptr_t& out) noexcept override {
+        if (!taskAvailable) return false;
+        out = task;
+        return true;
+    }
+    bool read_fields(std::uintptr_t requested, EmuTaskTitleFields& out) noexcept override {
+        if (!fieldsReadable || requested != task) return false;
+        out = fields;
+        if (++fieldReads == changeFieldsAfterRead) fields = changedFields;
+        return true;
+    }
+    std::uintptr_t portrait_module() noexcept override {
+        const auto result = loaded;
+        if (++moduleQueries == unloadAfterQuery) loaded = 0;
+        return result;
+    }
+    TitleModuleImage module_image(std::uintptr_t handle) noexcept override {
+        ++imageQueries;
+        auto result = image;
+        result.handle = handle;
+        result.valid = image.valid && handle == image.handle;
+        return result;
+    }
+    TitleFileKey file_key(const TitleModuleImage&) noexcept override { ++keyQueries; return key; }
+    bool verify_file(const TitleModuleImage& checked, const TitleFileKey& checkedKey) noexcept override {
+        ++verifyCalls;
+        return fileGood && checked.valid && checkedKey.valid;
+    }
+    // EmuTask::loadEmuModuleNum's end state for one index.
+    void load(std::int32_t index, std::uintptr_t module) {
+        fields.index = index;
+        fields.module = module;
+        fields.ready = 1;
+        loaded = module == Dra02 || module == Dra02Elsewhere ? module : 0;
+        image.handle = loaded ? loaded : image.handle;
+    }
+};
+
+struct TitleFixture {
+    FakeTitlePlatform platform;
+    TitleDetector detector;
+    std::uint64_t epoch = 5, now = 1000;
+    TitleObservation update() { return detector.update(platform, FakeTask, epoch, now); }
+};
+
+void title_detector_never_verifies_boot_menus_or_other_titles() {
+    TitleFixture f;
+    f.platform.taskAvailable = false;
+    CHECK(!f.update().portrait && f.update().reason == TitleReason::NoTask);
+    f.platform.taskAvailable = true;
+    CHECK(f.detector.update(f.platform, 0, f.epoch, f.now).reason == TitleReason::TaskMismatch);
+    CHECK(f.detector.update(f.platform, FakeTask + 8, f.epoch, f.now).reason == TitleReason::TaskMismatch);
+    f.platform.fieldsReadable = false;
+    CHECK(f.update().reason == TitleReason::ReadFailed);
+    f.platform.fieldsReadable = true;
+    // Constructor state: no module and index -1, +0x184 clear.
+    f.platform.fields = {FakeVtable, 0, -1, 0};
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::NoModule);
+    // Boot reinitialization clamps -1 to 0 and loads dra01 behind the menu.
+    f.platform.load(0, Dra01);
+    auto observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::DawnOfSorrow);
+    f.platform.load(2, Dra01 + 0x1000000);
+    observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::OrderOfEcclesia);
+    f.platform.load(3, Dra01 + 0x2000000);
+    observed = f.update();
+    CHECK(!observed.portrait && observed.reason == TitleReason::OtherTitle && observed.indexed == Title::Unknown);
+    f.platform.fields = {FakeVtable, Dra01, StaticModuleIndex, 1};
+    CHECK(f.update().reason == TitleReason::StaticModule);
+    f.platform.fields.index = 9;
+    CHECK(f.update().reason == TitleReason::OtherTitle);
+    // Even with dra02.dll still loaded, another index is never Portrait.
+    f.platform.fields = {FakeVtable, Dra02, 0, 1};
+    f.platform.loaded = Dra02;
+    CHECK(!f.update().portrait);
+    CHECK(f.platform.verifyCalls == 0);
+}
+
+void title_detector_requires_the_loaded_verified_dra02() {
+    TitleFixture f;
+    f.platform.fields.ready = 0;
+    CHECK(f.update().reason == TitleReason::Loading);
+    // setEmuModuleNum(1) before the reload: index 1, previous module, ready.
+    f.platform.fields = {FakeVtable, Dra01, PortraitModuleIndex, 1};
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.loaded = Dra02;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.fields.module = Dra02Elsewhere;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    f.platform.fields.module = Dra02;
+    f.platform.image.valid = false;  // wrong path, not MEM_IMAGE or not a DLL
+    CHECK(f.update().reason == TitleReason::ModuleImage);
+    f.platform.image.valid = true;
+    f.platform.fileGood = false;
+    CHECK(f.update().reason == TitleReason::ModuleFile);
+    TitleFixture good;
+    const auto observed = good.update();
+    CHECK(observed.portrait && observed.reason == TitleReason::Verified);
+    CHECK(observed.indexed == Title::PortraitOfRuin && observed.fields.module == Dra02 && observed.taskEpoch == 5);
+}
+
+void title_detector_caches_file_checks_per_image_and_epoch() {
+    TitleFixture f;
+    CHECK(f.update().portrait);
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 1 && f.platform.imageQueries == 1);
+    for (int i = 0; i < 300; ++i) CHECK(f.update().portrait);
+    // Unchanged frames: two field reads and two module lookups, no file I/O.
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 1 && f.platform.imageQueries == 1);
+    CHECK(f.platform.fieldReads == 2 * 301 && f.platform.moduleQueries == 2 * 301);
+    // A new task epoch re-checks the image and the cheap file identity only.
+    ++f.epoch;
+    CHECK(f.update().portrait);
+    CHECK(f.platform.verifyCalls == 1 && f.platform.keyQueries == 2 && f.platform.imageQueries == 2);
+    // The file changed on disk: hashed again and refused.
+    ++f.epoch;
+    f.platform.key.written += 1;
+    f.platform.fileGood = false;
+    CHECK(f.update().reason == TitleReason::ModuleFile && f.platform.verifyCalls == 2);
+    // Failed checks retry at most MaxFileAttempts times per epoch, spaced out.
+    for (int i = 0; i < 10; ++i) CHECK(!f.update().portrait);
+    CHECK(f.platform.verifyCalls == 2);
+    f.now += TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 3);
+    f.now += TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 4);
+    f.now += 10 * TitleDetector::FileRetryMs;
+    CHECK(!f.update().portrait && f.platform.verifyCalls == 4);
+    // A transient failure recovers on a later attempt.
+    ++f.epoch;
+    f.platform.fileGood = true;
+    CHECK(f.update().portrait && f.platform.verifyCalls == 5);
+    // A reload at another base is a new image: hashed once more.
+    f.platform.load(PortraitModuleIndex, Dra02Elsewhere);
+    CHECK(f.update().portrait && f.platform.verifyCalls == 6);
+    CHECK(f.detector.verifications() == 6);
+}
+
+void title_detector_rejects_races_and_unloads() {
+    TitleFixture f;
+    CHECK(f.update().portrait);
+    // +0x184 cleared by a load starting between the two reads.
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.ready = 0;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    CHECK(f.update().reason == TitleReason::Loading);
+    f.platform.fields.ready = 1;
+    CHECK(f.update().portrait);
+    // +0x528 and vtable changes between the reads.
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.module = Dra01;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    f.platform.fields.module = Dra02;
+    f.platform.changedFields = f.platform.fields;
+    f.platform.changedFields.vtable = FakeVtable + 0x10;
+    f.platform.changeFieldsAfterRead = f.platform.fieldReads + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    f.platform.fields.vtable = FakeVtable;
+    CHECK(f.update().portrait);
+    // dra02.dll unloaded between the module checks, then gone.
+    f.platform.unloadAfterQuery = f.platform.moduleQueries + 1;
+    CHECK(f.update().reason == TitleReason::Inconsistent);
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+    // The fast path never skips the module identity of a later frame.
+    f.platform.loaded = Dra02;
+    CHECK(f.update().portrait);
+    f.platform.loaded = 0;
+    CHECK(f.update().reason == TitleReason::ModuleMismatch);
+}
+
+void title_detector_follows_portrait_dawn_portrait_transitions() {
+    TitleFixture f;
+    std::vector<std::uint64_t> generations;
+    const auto expect = [&](bool portrait, TitleReason reason) {
+        const auto observed = f.update();
+        CHECK(observed.portrait == portrait && observed.reason == reason);
+        CHECK(f.update().generation == observed.generation);  // stable while unchanged
+        CHECK(generations.empty() || observed.generation > generations.back());
+        generations.push_back(observed.generation);
+    };
+    expect(true, TitleReason::Verified);
+    f.platform.fields.index = 0;                     // menu: setEmuModuleNum(0)
+    expect(false, TitleReason::OtherTitle);
+    ++f.epoch;                                       // reinitialize
+    f.platform.fields.ready = 0;                     // loadEmuModuleNum starts
+    expect(false, TitleReason::OtherTitle);
+    f.platform.load(0, Dra01);                       // Dawn of Sorrow running
+    expect(false, TitleReason::OtherTitle);
+    f.platform.fields.index = PortraitModuleIndex;   // menu: setEmuModuleNum(1)
+    expect(false, TitleReason::ModuleMismatch);
+    ++f.epoch;
+    f.platform.fields.ready = 0;
+    expect(false, TitleReason::Loading);
+    f.platform.load(PortraitModuleIndex, Dra02);     // Portrait again, same image
+    expect(true, TitleReason::Verified);
+    ++f.epoch;                                       // task reinitialized in place
+    expect(true, TitleReason::Verified);
+    CHECK(f.platform.verifyCalls == 1);
+}
+
+void portrait_gate_confirms_identity_and_revokes_at_once() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    portrait.taskEpoch = 7;
+    PortraitGateInput input{portrait, true, false, false};
+    TitleObservation other = portrait;
+    other.portrait = false;
+    other.reason = TitleReason::OtherTitle;
+    auto state = gate.update({other, true, false, false});
+    CHECK(!state.identity && !state.input && !state.identityChanged);
+    state = gate.update(input);
+    CHECK(!state.identity && !state.input);
+    state = gate.update(input);
+    CHECK(state.identity && state.input && state.identityChanged && state.inputChanged);
+    state = gate.update(input);
+    CHECK(state.identity && !state.identityChanged && !state.inputChanged);
+    // Any unverified observation revokes immediately.
+    state = gate.update({other, true, false, false});
+    CHECK(!state.identity && !state.input && state.identityChanged && state.inputChanged);
+    // A new module or task epoch needs fresh confirmations.
+    gate.update(input);
+    CHECK(gate.update(input).identity);
+    input.title.fields.module = Dra02Elsewhere;
+    CHECK(!gate.update(input).identity);
+    CHECK(gate.update(input).identity);
+    input.title.taskEpoch = 8;
+    CHECK(!gate.update(input).identity);
+    CHECK(gate.update(input).identity);
+    gate.reset();
+    CHECK(!gate.identity() && !gate.input());
+}
+
+void portrait_gate_keeps_input_out_of_foreign_pauses() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    gate.update({portrait, true, false, false});
+    CHECK(gate.update({portrait, true, false, false}).input);
+    // The collection's menus pause the EmuTask: original input, Portrait kept.
+    auto state = gate.update({portrait, true, true, false});
+    CHECK(state.identity && !state.input && state.inputChanged && !state.identityChanged);
+    // The mod's own map pause, request in flight or stale pause keep it.
+    CHECK(gate.update({portrait, true, true, true}).input);
+    CHECK(!gate.update({portrait, false, false, true}).input);  // pause unknown
+    CHECK(gate.update({portrait, true, false, false}).input);
+    TitleObservation lost = portrait;
+    lost.portrait = false;
+    lost.reason = TitleReason::Loading;
+    CHECK(!gate.update({lost, true, false, true}).input);
+}
+
+PortraitStateFields scene_fields(std::uint8_t mode, std::uint8_t state = 2, std::uint8_t type = 0,
+                                 std::uint8_t page = 0, std::uint8_t requested = 0) {
+    PortraitStateFields fields{};
+    fields.mode = mode;
+    fields.gameState = state;
+    fields.gameType = type;
+    fields.page = page;
+    fields.requestedPage = requested;
+    return fields;
+}
+
+void portrait_scene_separates_title_menus_and_gameplay() {
+    // Unreadable or inconsistent fields are unknown, whatever they hold.
+    auto verdict = classify_portrait_scene(scene_fields(2), false);
+    CHECK(verdict.scene == GameScene::Unknown && !verdict.gameplay && !verdict.mapReady);
+    // Before the Konami screen asks for page 6 the page is still 0: the mode decides.
+    verdict = classify_portrait_scene(scene_fields(0x1c, 0, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Boot && !verdict.gameplay && !verdict.mapReady);
+    verdict = classify_portrait_scene(scene_fields(0x0b, 0, 0, 6, 5), true);
+    CHECK(verdict.scene == GameScene::Boot && !verdict.gameplay);
+    // Title screen (the reported case: page 6, the graveyard image).
+    verdict = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    CHECK(verdict.scene == GameScene::Title && !verdict.gameplay && !verdict.mapReady);
+    // Even a stale map page outside gameplay is not a map.
+    verdict = classify_portrait_scene(scene_fields(5, 2, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Title && !verdict.mapReady);
+    for (const std::uint8_t mode : {0x12, 0x13, 0x16, 0x1a, 0x1b})
+        CHECK(classify_portrait_scene(scene_fields(mode, 2, 0, 4, 4), true).scene == GameScene::StartMenu);
+    for (const std::uint8_t mode : {0x00, 0x01, 0x14, 0x15})
+        CHECK(classify_portrait_scene(scene_fields(mode), true).scene == GameScene::Loading);
+    for (const std::uint8_t mode : {0x07, 0x08, 0x09}) {
+        verdict = classify_portrait_scene(scene_fields(mode, 2, 0, 0, 0), true);
+        CHECK(verdict.scene == GameScene::InGameMenu && !verdict.gameplay && !verdict.mapReady);
+    }
+    for (const std::uint8_t mode : {0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x17})
+        CHECK(classify_portrait_scene(scene_fields(mode, 2, 0, 0, 0), true).scene == GameScene::Sequence);
+    for (unsigned mode = 0x1d; mode <= 0xff; ++mode) {
+        verdict = classify_portrait_scene(scene_fields(static_cast<std::uint8_t>(mode), 2, 0, 0, 0), true);
+        CHECK(verdict.scene == GameScene::Unknown && !verdict.gameplay && !verdict.mapReady);
+    }
+    // Gameplay with the map or Status page shown: map ready.
+    verdict = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    CHECK(verdict.scene == GameScene::Gameplay && verdict.gameplay && verdict.mapReady);
+    CHECK(classify_portrait_scene(scene_fields(2, 2, 0, 1, 1), true).mapReady);
+    // Gameplay without a map yet: fade-in, death, switching or another page.
+    for (const std::uint8_t state : {0, 1, 3}) {
+        verdict = classify_portrait_scene(scene_fields(2, state, 0, 0, 0), true);
+        CHECK(verdict.gameplay && !verdict.mapReady);
+    }
+    CHECK(!classify_portrait_scene(scene_fields(2, 2, 0, 0, 1), true).mapReady);
+    CHECK(!classify_portrait_scene(scene_fields(2, 2, 0, 4, 4), true).mapReady);
+    // Extra modes (Sisters, Richter, ...) were never validated with the map.
+    for (const std::uint8_t type : {1, 2, 3, 4, 5}) {
+        verdict = classify_portrait_scene(scene_fields(2, 2, type, 0, 0), true);
+        CHECK(verdict.scene == GameScene::ExtraMode && !verdict.gameplay && !verdict.mapReady);
+    }
+    CHECK(std::string(game_scene_name(GameScene::Title)) == "title");
+}
+
+void map_command_opens_only_ready_maps_and_always_closes() {
+    // Opening needs an unpaused, ready map; anything else changes nothing.
+    CHECK(map_command({false, false, false, false, true}) == MapCommand::Open);
+    CHECK(map_command({false, false, false, false, false}) == MapCommand::Refuse);
+    CHECK(map_command({false, false, false, true, true}) == MapCommand::None);
+    // Closing and cancelling never depend on the scene.
+    CHECK(map_command({true, true, false, false, false}) == MapCommand::CloseVoluntary);
+    CHECK(map_command({true, true, false, true, true}) == MapCommand::CloseVoluntary);
+    CHECK(map_command({false, true, false, true, false}) == MapCommand::Cancel);
+    CHECK(map_command({false, false, true, false, false}) == MapCommand::Cancel);
+}
+
+void portrait_gate_separates_identity_gameplay_and_map() {
+    PortraitGate gate;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    const auto title = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    const auto ready = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    const auto fading = classify_portrait_scene(scene_fields(2, 1, 0, 0, 0), true);
+    gate.update({portrait, true, false, false, ready});
+    // Title screen: the mod may be toggled (identity, input) but View is native.
+    auto state = gate.update({portrait, true, false, false, title});
+    CHECK(state.identity && state.input && !state.gameplay && !state.mapReady);
+    state = gate.update({portrait, true, false, false, ready});
+    CHECK(state.gameplay && state.mapReady && state.gameplayChanged);
+    state = gate.update({portrait, true, false, false, fading});
+    CHECK(state.gameplay && !state.mapReady && !state.gameplayChanged);
+    // The mod's own pause keeps a frozen ready map ready; a foreign pause does not.
+    CHECK(gate.update({portrait, true, true, true, ready}).mapReady);
+    CHECK(!gate.update({portrait, true, true, false, ready}).mapReady);
+    // No identity: nothing, whatever the scene says.
+    TitleObservation other = portrait;
+    other.portrait = false;
+    other.reason = TitleReason::OtherTitle;
+    state = gate.update({other, true, false, false, ready});
+    CHECK(!state.identity && !state.gameplay && !state.mapReady && state.gameplayChanged);
+}
+
+// Mirrors live_controller's View handling: mapAllowed = gameplay (plus the
+// usual mod/focus/pause terms), and a ToggleMap is executed by map_command.
+void view_follows_scene_without_duplicate_or_stray_commands() {
+    PortraitGate gate;
+    InputRecognizer recognizer;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    InputSnapshot sample{};
+    PortraitGateState state{};
+    const auto step = [&](std::uint16_t buttons, const SceneVerdict& scene) {
+        state = gate.update({portrait, true, false, false, scene});
+        if (state.inputChanged) recognizer.reset();
+        if (!state.input) return InputResult{buttons, 0, InputAction::None, false, false};
+        sample.buttons = buttons;
+        const InputPolicy policy{true, true, state.gameplay, 1};
+        return recognizer.update(sample, policy);
+    };
+    const auto title = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    const auto ready = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    const auto switching = classify_portrait_scene(scene_fields(2, 2, 0, 0, 1), true);
+    const auto menu = classify_portrait_scene(scene_fields(7, 2, 0, 0, 0), true);
+    step(0, title);
+    step(0, title);
+    // Title: View is native Select (replayed on release), no map command.
+    CHECK(step(ButtonView, title).forwardedButtons == 0);
+    auto result = step(0, title);
+    CHECK(result.action == InputAction::None && result.delayedViewPulse && result.forwardedButtons == ButtonView);
+    // View+Y still toggles the mod on the title screen.
+    step(ButtonView, title);
+    CHECK(step(ButtonView | ButtonY, title).action == InputAction::ToggleMod);
+    step(0, title);
+    // Gameplay: View is the map command, decided at release by map_command.
+    CHECK(step(ButtonView, ready).forwardedButtons == 0);
+    result = step(0, ready);
+    CHECK(result.action == InputAction::ToggleMap && !result.delayedViewPulse);
+    CHECK(map_command({false, false, false, false, state.mapReady}) == MapCommand::Open);
+    // A sub-screen switch in progress: consumed, refused, no Select page flip.
+    CHECK(step(ButtonView, switching).forwardedButtons == 0);
+    result = step(0, switching);
+    CHECK(result.action == InputAction::ToggleMap && !result.delayedViewPulse && result.forwardedButtons == 0);
+    CHECK(map_command({false, false, false, false, state.mapReady}) == MapCommand::Refuse);
+    // View held from gameplay into the pause menu: swallowed and drained, no
+    // map, no Select, no second command on release.
+    CHECK(step(ButtonView, ready).forwardedButtons == 0);
+    result = step(ButtonView, menu);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    result = step(0, menu);
+    CHECK(result.action == InputAction::None && !result.delayedViewPulse && result.forwardedButtons == 0);
+    // Then, in the menu, View is native Select again.
+    step(ButtonView, menu);
+    result = step(0, menu);
+    CHECK(result.action == InputAction::None && result.delayedViewPulse);
+    // And held from the title into gameplay: drained, never a map command.
+    step(0, title);
+    step(ButtonView, title);
+    result = step(ButtonView, ready);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    result = step(0, ready);
+    CHECK(result.action == InputAction::None && !result.delayedViewPulse);
+}
+
+// Mirrors live_controller: a gate change resets the recognizer, the inactive
+// filter forwards the raw word, and a View held across reactivation drains.
+void gate_changes_never_carry_a_gesture_across_contexts() {
+    PortraitGate gate;
+    InputRecognizer recognizer;
+    TitleObservation portrait{};
+    portrait.portrait = true;
+    portrait.reason = TitleReason::Verified;
+    portrait.fields = {FakeVtable, Dra02, PortraitModuleIndex, 1};
+    const InputPolicy policy{true, true, true, 1};
+    InputSnapshot sample{};
+    const auto filter = [&](std::uint16_t buttons, bool paused) {
+        const auto state = gate.update({portrait, true, paused, false});
+        if (state.inputChanged) recognizer.reset();
+        sample.buttons = buttons;
+        if (!state.input) return InputResult{buttons, 0, InputAction::None, false, false};
+        return recognizer.update(sample, policy);
+    };
+    filter(0, false);
+    CHECK(filter(0, false).forwardedButtons == 0);
+    CHECK(filter(ButtonView, false).forwardedButtons == 0);          // pending in Portrait
+    // The collection menu pauses mid-gesture: the raw word passes unchanged.
+    CHECK(filter(ButtonView | ButtonY, true).forwardedButtons == (ButtonView | ButtonY));
+    CHECK(filter(ButtonView, true).forwardedButtons == ButtonView);
+    // Back in gameplay with View still held: drained, no map or mod toggle.
+    auto result = filter(ButtonView, false);
+    CHECK(result.forwardedButtons == 0 && result.action == InputAction::None);
+    result = filter(0, false);
+    CHECK(result.action == InputAction::None && result.forwardedButtons == 0);
+    CHECK(filter(ButtonView, false).forwardedButtons == 0);
+    CHECK(filter(0, false).action == InputAction::ToggleMap);
+    // Title lost: every combination is forwarded exactly.
+    portrait.portrait = false;
+    portrait.reason = TitleReason::OtherTitle;
+    for (std::uint32_t buttons = 0; buttons <= 0xffff; ++buttons) {
+        const auto raw = static_cast<std::uint16_t>(buttons);
+        result = filter(raw, buttons % 3 == 0);
+        CHECK(result.forwardedButtons == raw && result.action == InputAction::None && !result.delayedViewPulse);
+    }
+}
 }
 
 int main() {
@@ -1170,6 +1649,18 @@ int main() {
         {"coordinator_pause_failure_and_external_changes", coordinator_pause_failure_and_external_changes},
         {"coordinator_focus_reconnect_release_pending_and_shutdown", coordinator_focus_reconnect_release_pending_and_shutdown},
         {"coordinator_shared_profiles_never_imply_support", coordinator_shared_profiles_never_imply_support},
+        {"title_detector_never_verifies_boot_menus_or_other_titles", title_detector_never_verifies_boot_menus_or_other_titles},
+        {"title_detector_requires_the_loaded_verified_dra02", title_detector_requires_the_loaded_verified_dra02},
+        {"title_detector_caches_file_checks_per_image_and_epoch", title_detector_caches_file_checks_per_image_and_epoch},
+        {"title_detector_rejects_races_and_unloads", title_detector_rejects_races_and_unloads},
+        {"title_detector_follows_portrait_dawn_portrait_transitions", title_detector_follows_portrait_dawn_portrait_transitions},
+        {"portrait_gate_confirms_identity_and_revokes_at_once", portrait_gate_confirms_identity_and_revokes_at_once},
+        {"portrait_gate_keeps_input_out_of_foreign_pauses", portrait_gate_keeps_input_out_of_foreign_pauses},
+        {"gate_changes_never_carry_a_gesture_across_contexts", gate_changes_never_carry_a_gesture_across_contexts},
+        {"portrait_scene_separates_title_menus_and_gameplay", portrait_scene_separates_title_menus_and_gameplay},
+        {"map_command_opens_only_ready_maps_and_always_closes", map_command_opens_only_ready_maps_and_always_closes},
+        {"portrait_gate_separates_identity_gameplay_and_map", portrait_gate_separates_identity_gameplay_and_map},
+        {"view_follows_scene_without_duplicate_or_stray_commands", view_follows_scene_without_duplicate_or_stray_commands},
     };
     int failures = 0;
     for (const auto& test : tests) {

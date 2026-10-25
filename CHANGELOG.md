@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.1 — 2026-10-25
+
+- Title isolation: the mod acts only while Portrait of Ruin is the verified
+  active title (EmuTask module index, loaded dra02.dll handle, path and hash,
+  read twice). Dawn of Sorrow, Order of Ecclesia, Haunted Castle and loads in
+  progress keep original presentation and input, with the mod on or off.
+- Inside Portrait, the collection's own menus (which pause the game) now receive
+  View/Y unchanged; the mod's map, View+Y and marker behavior is otherwise kept.
+- Scene gate: Portrait's own game mode, gameplay state and sub-screen page decide
+  whether View is the map command and whether the enlarged map may open. On the
+  title screen, menus and sequences View stays native Select (View+Y still
+  toggles the mod); in gameplay without a map to show, View does nothing.
+- Synthetic tests for identification, races, caching, scenes and gate transitions.
+
+Validated in game as internal rc7 (see docs/VALIDATION.md). Extra modes, Boss
+Rush and every in-game event are not individually validated; there View stays
+native Select. Dawn of Sorrow and Order of Ecclesia remain unsupported.
+
 ## 0.1.0 — 2026-10-24
 
 First source publication, based on the validated internal rc5 implementation.
