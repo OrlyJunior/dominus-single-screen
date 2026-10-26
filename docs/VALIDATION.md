@@ -102,8 +102,9 @@ dispatch, LB/RB and view-owned press reservation over every button
 combination, the Dawn view input sequences, pointer remapping and hiding), WARP with `--proxy` 19
 (the real title platform fails closed for Portrait and Dawn in a non-game host),
 guard 1, Steam pad 10 (adds: presses can be withheld through the real builder
-but never injected), Python 19. Installer fixtures: see the session handoff
-(they refuse to run while any `game.exe` is open).
+but never injected), Python 19, installer fixtures 14 with RealGameTouched=false
+(adds file identity, process decision and live enumeration; run while
+Castlevania Advance Collection was open, correctly identified and allowed).
 
 The Dawn profile is off by default; with it off the detector, gate and input
 paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). No in-game
