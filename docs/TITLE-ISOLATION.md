@@ -83,6 +83,15 @@ and retention, the disconnect path and stale-pause recovery. Native hooks remain
 pass-through observers in every title. `EnableNativeObserver=0` leaves the mod
 inert.
 
+## Development branch: experimental Dawn of Sorrow
+
+With `EnableExperimentalDawn=1` the detector also accepts index 0 with the exact
+`dra01.dll` (SHA-256 `52E20914…CD6E`) under the same checks, and Dawn's own
+scene classifier decides single screen and the enlarged map
+([DAWN-OF-SORROW.md](DAWN-OF-SORROW.md)). With the default 0 nothing above
+changes: index 0 is `other-title` and Dawn's input and layout stay original.
+Order of Ecclesia and Haunted Castle remain inert either way.
+
 ## Limits
 
 - After leaving Portrait the collection menu still names Portrait (index 1,

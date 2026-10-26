@@ -92,3 +92,19 @@ In game, installed with the repository scripts over a verified private backup
 
 Not validated individually: extra modes, Boss Rush, endings, Haunted Castle
 (not visited in the logged sessions), and every in-game dialogue or event.
+
+## Development branch: experimental Dawn of Sorrow (synthetic only)
+
+Built with Zig 0.13.0 `-Release` into `out/`; nothing installed, no game run.
+Core 60 groups (the 50 of v0.1.1 plus profiles, Dawn detection on/off,
+per-title hashing, title gate, Dawn scene rules over every mode/sub-state/page,
+dispatch, LB/RB reservation over every button combination, the Dawn view
+input sequence, pointer remapping and pointer hiding), WARP with `--proxy` 19
+(the real title platform fails closed for Portrait and Dawn in a non-game host),
+guard 1, Steam pad 10 (adds: LB/RB can be consumed through the real builder
+but never injected), Python 19. Installer fixtures: see the session handoff
+(they refuse to run while any `game.exe` is open).
+
+The Dawn profile is off by default; with it off the detector, gate and input
+paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). No in-game
+validation of Dawn exists yet; see the plan in DAWN-OF-SORROW.md.

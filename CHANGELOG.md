@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (development branch `dev/dawn-of-sorrow`)
+
+- Experimental Dawn of Sorrow profile, off by default (`EnableExperimentalDawn`),
+  not validated in game: single screen in normal gameplay, View opens the
+  enlarged top screen on the map with native pause, LB/RB switch map/Status,
+  original layout automatically outside plain gameplay, mouse/touch positions
+  remapped to the original panel. See docs/DAWN-OF-SORROW.md.
+- Title-generic identification, scene dispatch, gate and adaptation profiles;
+  Portrait keeps its v0.1.1 profile and behavior.
+
 ## 0.1.1 — 2026-10-25
 
 - Title isolation: the mod acts only while Portrait of Ruin is the verified

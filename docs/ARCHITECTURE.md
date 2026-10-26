@@ -68,10 +68,25 @@ read is not an atomic association with the GPU/GameThread; freshness, matching
 frozen pixels and cycle gates remain necessary. No game function is called and
 no game state is written by this provider.
 
+## Title profiles (development branch)
+
+One decision point per title, the rest shared. title_identity verifies a title
+from an enabled set (Portrait by default; Dawn only with the experimental INI
+switch) and reads that title's own scene fields; core classifies them
+(classify_portrait_scene, classify_dawn_scene) and TitleGate gates them. The
+differences live in core's AdaptationProfile data: layout rectangles, how the
+map panel is found (Portrait: pixels; Dawn: native page), whether the main
+screen is shown alone in every verified scene (Portrait) or only where the
+scene allows it (Dawn, original layout elsewhere), LB/RB page navigation
+(PageButtonFilter), marker replay (Portrait only) and pointer remapping
+(pointer_remap, Dawn only). A title without a profile stays inert. See
+[DAWN-OF-SORROW.md](DAWN-OF-SORROW.md).
+
 ## Ownership and extension boundaries
 
 Runtime code is split among core, graphics, input_observer, native_runtime,
-live_controller, marker_blink, marker_identity and title_identity. render_capture and
+live_controller, marker_blink, marker_identity, title_identity and pointer_remap.
+render_capture and
 resource_observer are optional diagnostics, not requirements for normal playback.
 The RenderDoc adapter has its own opt-in/version/path checks and ships no tool DLL.
 
