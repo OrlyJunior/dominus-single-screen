@@ -1069,19 +1069,30 @@ void marker_replay_test(Device& device,DXGI_FORMAT format) {
 }
 
 // The real Windows title platform in a host that is not game.exe: no task at
-// the game's global, so Portrait is never reported, whatever task is claimed.
+// the game's global, so no title is ever reported, whatever task is claimed,
+// with the default set (Portrait) and with experimental Dawn enabled.
 void title_identity_fails_closed_outside_the_game() {
-    for(const std::uintptr_t task:{std::uintptr_t{0},std::uintptr_t{0x10000},reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr))}){
-        for(std::uint64_t epoch=0;epoch<3;++epoch){
-            const auto observed=dominus::title::observe(task,epoch);
-            require(!observed.portrait&&observed.reason==dominus::TitleReason::NoTask,"non-game host reports no EmuTask and no Portrait");
+    for(const bool dawn:{false,true}){
+        dominus::title::configure({true,dawn});
+        for(const std::uintptr_t task:{std::uintptr_t{0},std::uintptr_t{0x10000},reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr))}){
+            for(std::uint64_t epoch=0;epoch<3;++epoch){
+                const auto observed=dominus::title::observe(task,epoch);
+                require(!observed.portrait&&observed.title==dominus::Title::Unknown&&observed.reason==dominus::TitleReason::NoTask,"non-game host reports no EmuTask and no title");
+            }
         }
     }
+    dominus::title::configure({});
     dominus::TitleObservation claimed{};
-    claimed.portrait=true;claimed.fields.module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    claimed.title=dominus::Title::PortraitOfRuin;claimed.portrait=true;claimed.fields.module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     require(!dominus::title::portrait_scene(claimed).available,"scene fields are never read from a module that is not the loaded dra02.dll");
+    require(!dominus::title::scene(claimed).available,"nor through the title dispatch");
+    claimed.title=dominus::Title::DawnOfSorrow;claimed.portrait=false;
+    require(!dominus::title::dawn_scene(claimed).available,"scene fields are never read from a module that is not the loaded dra01.dll");
+    require(!dominus::title::scene(claimed).available,"nor through the title dispatch for Dawn");
+    require(!dominus::title::portrait_scene(claimed).available,"Portrait fields are never read for another verified title");
     require(!dominus::title::portrait_scene(dominus::TitleObservation{}).available,"no scene without a verified title");
-    require(!GetModuleHandleW(L"dra02.dll"),"the check loaded no game module");
+    require(!dominus::title::scene(dominus::TitleObservation{}).available,"no scene of an unknown title");
+    require(!GetModuleHandleW(L"dra02.dll")&&!GetModuleHandleW(L"dra01.dll"),"the check loaded no game module");
 }
 
 struct Runner {

@@ -13,6 +13,27 @@ constexpr TitleProfile Profiles[] = {
     {Title::OrderOfEcclesia, "Castlevania: Order of Ecclesia", 256, 192, false},
 };
 
+// The exact preset observed in real Portrait sessions at 1920x1080 and
+// 2560x1440: gameplay on the left (1280x960 at 1080p) plus the two right-hand
+// 640x480 panels. Their order follows native Select (upper = the selected
+// page), so Portrait picks the map panel from pixels each time View opens it.
+constexpr NormalizedRect CollectionGameplay{0.f, 1.f / 18.f, 2.f / 3.f, 8.f / 9.f};
+constexpr NormalizedRect CollectionUpperPanel{2.f / 3.f, 1.f / 18.f, 1.f / 3.f, 4.f / 9.f};
+constexpr NormalizedRect CollectionLowerPanel{2.f / 3.f, 0.5f, 1.f / 3.f, 4.f / 9.f};
+
+constexpr AdaptationProfile Adaptations[] = {
+    // v0.1.1, validated in gameplay.
+    {Title::PortraitOfRuin, CollectionGameplay, CollectionUpperPanel, CollectionLowerPanel,
+     MapPanelSource::Pixels, true, false, true, false},
+    // Experimental: same collection layout assumed (not yet observed in Dawn),
+    // map panel from the native page, LB/RB pages, marker frozen (no replay
+    // until its cycle and position identity are established for dra01), and
+    // pointer positions remapped: Dawn's gameplay screen is its touch screen
+    // (dra01 0x18006fef0 adds the camera to touch coordinates).
+    {Title::DawnOfSorrow, CollectionGameplay, CollectionUpperPanel, CollectionLowerPanel,
+     MapPanelSource::NativePage, false, true, false, true},
+};
+
 bool same_runtime(const RuntimeSnapshot& a, const RuntimeSnapshot& b) noexcept {
     return a.context.title == b.context.title && a.context.scene == b.context.scene &&
            a.context.validated == b.context.validated && a.context.epoch == b.context.epoch &&
@@ -37,6 +58,13 @@ const TitleProfile& title_profile(Title title) noexcept {
         if (profile.title == title) return profile;
     }
     return Profiles[0];
+}
+
+const AdaptationProfile* adaptation_profile(Title title) noexcept {
+    for (const auto& profile : Adaptations) {
+        if (profile.title == title) return &profile;
+    }
+    return nullptr;
 }
 
 Geometry fit_4_3(int viewportWidth, int viewportHeight, ScaleMode mode) noexcept {
@@ -72,6 +100,38 @@ NativePoint screen_to_native(const Geometry& geometry, double x, double y) noexc
     result.y = localY * 192.0 / geometry.height;
     result.inside = true;
     return result;
+}
+
+ClientPoint presented_to_original(const Geometry& shown, int backWidth, int backHeight,
+                                  const NormalizedRect& source, int clientWidth, int clientHeight,
+                                  int x, int y) noexcept {
+    ClientPoint result{};
+    if (!shown.valid || shown.width <= 0 || shown.height <= 0 || backWidth <= 0 || backHeight <= 0 ||
+        clientWidth <= 0 || clientHeight <= 0 || !(source.width > 0.f) || !(source.height > 0.f) ||
+        x < 0 || y < 0 || x >= clientWidth || y >= clientHeight) return result;
+    // The centre of the client pixel, in back-buffer pixels.
+    const double bx = (x + 0.5) * backWidth / clientWidth;
+    const double by = (y + 0.5) * backHeight / clientHeight;
+    const double u = (bx - shown.left) / shown.width;
+    const double v = (by - shown.top) / shown.height;
+    if (!(u >= 0.0 && u < 1.0 && v >= 0.0 && v < 1.0)) return result;
+    const double nx = source.x + u * source.width;
+    const double ny = source.y + v * source.height;
+    if (!(nx >= 0.0 && nx < 1.0 && ny >= 0.0 && ny < 1.0)) return result;
+    result.x = std::min(clientWidth - 1, static_cast<int>(nx * clientWidth));
+    result.y = std::min(clientHeight - 1, static_cast<int>(ny * clientHeight));
+    result.inside = true;
+    return result;
+}
+
+bool PointerReservation::update(bool reserving, bool buttonsHeld) noexcept {
+    if (reserving) {
+        held_ = held_ || buttonsHeld;
+        return true;
+    }
+    if (held_ && buttonsHeld) return true;
+    held_ = false;
+    return false;
 }
 
 double lower_brown_fraction(const std::uint32_t* rgb, unsigned columns, unsigned rows) noexcept {
@@ -569,6 +629,37 @@ InputResult InputRecognizer::update(const InputSnapshot& input, const InputPolic
     return finish(0);
 }
 
+PageInput PageButtonFilter::update(std::uint16_t buttons, bool connected, bool reserving) noexcept {
+    PageInput result{};
+    if (!connected) {
+        // No release evidence: keep reservations, and do not take buttons
+        // already held on reconnection for new presses.
+        initialized_ = false;
+        return result;
+    }
+    const auto pressed = static_cast<std::uint16_t>(buttons & PageButtons);
+    if (!initialized_) {
+        previous_ = pressed;
+        initialized_ = true;
+    }
+    const auto edges = static_cast<std::uint16_t>(pressed & ~previous_);
+    if (reserving && edges) {
+        reserved_ = static_cast<std::uint16_t>(reserved_ | edges);
+        result.step = ((edges & ButtonRightShoulder) ? 1 : 0) - ((edges & ButtonLeftShoulder) ? 1 : 0);
+    }
+    result.consumedButtons = static_cast<std::uint16_t>(pressed & reserved_);
+    reserved_ = static_cast<std::uint16_t>(reserved_ & pressed);
+    previous_ = pressed;
+    return result;
+}
+
+unsigned step_page(unsigned page, int step, unsigned count) noexcept {
+    if (!count) return page;
+    const long long n = count;
+    const long long next = (static_cast<long long>(page % count) + step % n + n) % n;
+    return static_cast<unsigned>(next);
+}
+
 void PauseController::releaseOwned() noexcept {
     if (lease_.token == 0) {
         if (!active_) backend_ = nullptr;
@@ -752,6 +843,13 @@ Title indexed_title(std::int32_t index) noexcept {
     }
 }
 
+// Only an enabled title is ever verified; any other index stays OtherTitle.
+Title enabled_title(const TitleSet& enabled, std::int32_t index) noexcept {
+    if (index == PortraitModuleIndex && enabled.portrait) return Title::PortraitOfRuin;
+    if (index == DawnModuleIndex && enabled.dawn) return Title::DawnOfSorrow;
+    return Title::Unknown;
+}
+
 } // namespace
 
 const char* title_reason_name(TitleReason reason) noexcept {
@@ -776,11 +874,12 @@ TitleObservation TitleDetector::update(ITitlePlatform& platform, std::uintptr_t 
                                        std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept {
     TitleObservation next{};
     next.taskEpoch = taskEpoch;
-    const auto finish = [&](TitleReason reason) {
+    const auto finish = [&](TitleReason reason, Title title = Title::Unknown) {
         next.reason = reason;
-        next.portrait = reason == TitleReason::Verified;
-        if (!next.portrait) fastValid_ = false;
-        const bool changed = !haveLast_ || last_.portrait != next.portrait || last_.reason != next.reason ||
+        next.title = reason == TitleReason::Verified ? title : Title::Unknown;
+        next.portrait = next.title == Title::PortraitOfRuin;
+        if (next.title == Title::Unknown) fastValid_ = false;
+        const bool changed = !haveLast_ || last_.title != next.title || last_.reason != next.reason ||
                              !same_fields(last_.fields, next.fields) || last_.taskEpoch != next.taskEpoch;
         next.generation = last_.generation + (changed ? 1 : 0);
         last_ = next;
@@ -798,55 +897,58 @@ TitleObservation TitleDetector::update(ITitlePlatform& platform, std::uintptr_t 
     next.indexed = indexed_title(first.index);
     if (first.index == StaticModuleIndex) return finish(TitleReason::StaticModule);
     if (first.index < 0) return finish(TitleReason::NoModule);
-    if (first.index != PortraitModuleIndex) return finish(TitleReason::OtherTitle);
+    const Title wanted = enabled_title(enabled_, first.index);
+    if (wanted == Title::Unknown) return finish(TitleReason::OtherTitle);
     if (!first.ready) return finish(TitleReason::Loading);
-    const auto handle = platform.portrait_module();
-    // Also rejects setEmuModuleNum(1) still pointing at the previous module.
+    const auto handle = platform.title_module(wanted);
+    // Also rejects setEmuModuleNum(index) still pointing at the previous module.
     if (!handle || handle != first.module) return finish(TitleReason::ModuleMismatch);
-    const bool unchanged = fastValid_ && fastTask_ == task && fastHandle_ == handle &&
+    const bool unchanged = fastValid_ && fastTitle_ == wanted && fastTask_ == task && fastHandle_ == handle &&
                            fastEpoch_ == taskEpoch && same_fields(fastFields_, first);
     if (!unchanged) {
-        const auto image = platform.module_image(handle);
+        const auto image = platform.module_image(wanted, handle);
         if (!image.valid || image.handle != handle) return finish(TitleReason::ModuleImage);
-        if (!file_verified(platform, image, taskEpoch, nowMs)) return finish(TitleReason::ModuleFile);
+        if (!file_verified(platform, wanted, image, taskEpoch, nowMs)) return finish(TitleReason::ModuleFile);
     }
     // A load/unload racing these checks changes +0x184, +0x528 or the module.
     EmuTaskTitleFields second{};
     if (!platform.read_fields(task, second) || !same_fields(first, second) ||
-        platform.portrait_module() != handle) {
+        platform.title_module(wanted) != handle) {
         return finish(TitleReason::Inconsistent);
     }
     fastValid_ = true;
+    fastTitle_ = wanted;
     fastTask_ = task;
     fastHandle_ = handle;
     fastEpoch_ = taskEpoch;
     fastFields_ = first;
-    return finish(TitleReason::Verified);
+    return finish(TitleReason::Verified, wanted);
 }
 
-bool TitleDetector::file_verified(ITitlePlatform& platform, const TitleModuleImage& image,
+bool TitleDetector::file_verified(ITitlePlatform& platform, Title title, const TitleModuleImage& image,
                                   std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept {
-    const bool sameImage = haveImage_ && same_image(image_, image);
-    const bool sameEpoch = sameImage && keyEpoch_ == taskEpoch;
-    if (sameEpoch && fileOk_) return true;
-    if (sameEpoch && (attempts_ >= MaxFileAttempts || nowMs < retryAtMs_)) return false;
-    if (!sameEpoch) attempts_ = 0;
-    const auto key = platform.file_key(image);
+    auto& f = files_[title == Title::DawnOfSorrow ? 1 : 0];
+    const bool sameImage = f.haveImage && same_image(f.image, image);
+    const bool sameEpoch = sameImage && f.keyEpoch == taskEpoch;
+    if (sameEpoch && f.fileOk) return true;
+    if (sameEpoch && (f.attempts >= MaxFileAttempts || nowMs < f.retryAtMs)) return false;
+    if (!sameEpoch) f.attempts = 0;
+    const auto key = platform.file_key(title, image);
     // A new task epoch re-checks only the cheap identity of an image already
     // verified; its content is hashed again only if that identity changed.
-    if (sameImage && fileOk_ && same_key(key, key_)) {
-        keyEpoch_ = taskEpoch;
+    if (sameImage && f.fileOk && same_key(key, f.key)) {
+        f.keyEpoch = taskEpoch;
         return true;
     }
-    image_ = image;
-    haveImage_ = true;
-    key_ = key;
-    keyEpoch_ = taskEpoch;
-    ++attempts_;
+    f.image = image;
+    f.haveImage = true;
+    f.key = key;
+    f.keyEpoch = taskEpoch;
+    ++f.attempts;
     ++verifications_;
-    fileOk_ = key.valid && platform.verify_file(image, key);
-    retryAtMs_ = fileOk_ ? 0 : nowMs + FileRetryMs;
-    return fileOk_;
+    f.fileOk = key.valid && platform.verify_file(title, image, key);
+    f.retryAtMs = f.fileOk ? 0 : nowMs + FileRetryMs;
+    return f.fileOk;
 }
 
 const char* game_scene_name(GameScene scene) noexcept {
@@ -904,6 +1006,68 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
     }
 }
 
+bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept {
+    return a.mode == b.mode && a.gameState == b.gameState && a.gameType == b.gameType && a.page == b.page &&
+           a.requestedPage == b.requestedPage && a.pageOverlay == b.pageOverlay && a.frozen == b.frozen &&
+           a.eventFlags == b.eventFlags && a.fadeFrames == b.fadeFrames && a.brightness == b.brightness;
+}
+
+SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) noexcept {
+    SceneVerdict verdict{};
+    if (!available) return verdict;
+    switch (fields.mode) {
+        case DawnGameplayMode: {
+            // The other modes keep their own top screens; never validated.
+            if (fields.gameType != 0) {
+                verdict.scene = GameScene::ExtraMode;
+                return verdict;
+            }
+            verdict.scene = GameScene::Gameplay;
+            // The map/Status pair, both pages live. An event's own top-screen
+            // page, the overlay, a scripted page lock or an unknown sub-state
+            // is shown in the original layout instead.
+            const bool pair = fields.page <= 1 && fields.requestedPage <= 1 && fields.pageOverlay == 0;
+            const bool knownState = fields.gameState <= 3 || fields.gameState == 6;
+            const bool single = pair && knownState && !(fields.eventFlags & DawnPageLockFlag);
+            verdict.gameplay = single;
+            verdict.singleScreen = single;
+            // Entering, room changes, area loads, fades, a page switch in
+            // progress or a moment the game would refuse its own pause menu:
+            // no map yet.
+            verdict.mapReady = single && fields.gameState == DawnRunningState &&
+                               fields.page == fields.requestedPage && fields.frozen == 0 &&
+                               fields.fadeFrames == 0 && fields.brightness == 0 &&
+                               !(fields.eventFlags & DawnMenuBlockFlags);
+            // The shown page is on the first bank, the upper panel: page 0
+            // (map) puts the map there, page 1 (Status) in the lower one.
+            if (verdict.mapReady) verdict.mapPanel = fields.page;
+            return verdict;
+        }
+        case 0x00: case 0x01:
+            verdict.scene = GameScene::Loading;
+            return verdict;
+        case 0x03:
+            verdict.scene = GameScene::Title;
+            return verdict;
+        case 0x0a:
+            verdict.scene = GameScene::InGameMenu;
+            return verdict;
+        case 0x05: case 0x16:
+            verdict.scene = GameScene::Sequence;
+            return verdict;
+        default:
+            return verdict;
+    }
+}
+
+SceneVerdict classify_scene(const TitleSceneFields& fields, bool available) noexcept {
+    switch (fields.title) {
+        case Title::PortraitOfRuin: return classify_portrait_scene(fields.portrait, available);
+        case Title::DawnOfSorrow: return classify_dawn_scene(fields.dawn, available);
+        default: return {};
+    }
+}
+
 MapCommand map_command(const MapCommandInput& input) noexcept {
     if (input.mapOpen && input.owned) return MapCommand::CloseVoluntary;
     if (input.owned || input.choosing) return MapCommand::Cancel;
@@ -911,16 +1075,19 @@ MapCommand map_command(const MapCommandInput& input) noexcept {
     return input.mapReady ? MapCommand::Open : MapCommand::Refuse;
 }
 
-PortraitGateState PortraitGate::update(const PortraitGateInput& input) noexcept {
-    if (input.title.portrait) {
-        if (streak_ && (module_ != input.title.fields.module || epoch_ != input.title.taskEpoch)) streak_ = 0;
+TitleGateState TitleGate::update(const TitleGateInput& input) noexcept {
+    const Title title = input.title.title;
+    if (title != Title::Unknown) {
+        if (streak_ && (title_ != title || module_ != input.title.fields.module || epoch_ != input.title.taskEpoch))
+            streak_ = 0;
         if (streak_ < Confirmations) ++streak_;
+        title_ = title;
         module_ = input.title.fields.module;
         epoch_ = input.title.taskEpoch;
     } else {
         streak_ = 0;
     }
-    PortraitGateState state{};
+    TitleGateState state{};
     state.identity = streak_ >= Confirmations;
     state.input = state.identity && input.pauseKnown && (!input.paused || input.modPause);
     state.gameplay = state.identity && input.scene.gameplay;
@@ -928,6 +1095,7 @@ PortraitGateState PortraitGate::update(const PortraitGateInput& input) noexcept 
     state.identityChanged = state.identity != identity_;
     state.inputChanged = state.input != input_;
     state.gameplayChanged = state.gameplay != gameplay_;
+    state.title = state.identity ? title_ : Title::Unknown;
     identity_ = state.identity;
     input_ = state.input;
     gameplay_ = state.gameplay;

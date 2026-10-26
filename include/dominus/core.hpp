@@ -11,6 +11,12 @@ namespace dominus {
 inline constexpr std::uint16_t ButtonView = 0x0020;
 inline constexpr std::uint16_t ButtonY = 0x8000;
 inline constexpr std::uint16_t ShortcutButtons = ButtonView | ButtonY;
+// LB/RB as the game.exe Steam pad builder 0x22A920 writes them for its only
+// l1/r1 action readers (docs/STEAM-INPUT-VIEW.md); the collection turns them
+// into DS L (0x200) and R (0x100).
+inline constexpr std::uint16_t ButtonLeftShoulder = 0x0100;
+inline constexpr std::uint16_t ButtonRightShoulder = 0x0200;
+inline constexpr std::uint16_t PageButtons = ButtonLeftShoulder | ButtonRightShoulder;
 
 enum class Title { Unknown, PortraitOfRuin, DawnOfSorrow, OrderOfEcclesia };
 enum class Context { Unknown, Exploration, Menu, Dialogue, Cutscene, Touchscreen, Transition };
@@ -27,6 +33,35 @@ struct TitleProfile {
 };
 
 const TitleProfile& title_profile(Title title) noexcept;
+
+// A rectangle of the collection's back buffer, in normalized coordinates.
+struct NormalizedRect { float x = 0.f, y = 0.f, width = 1.f, height = 1.f; };
+// How the enlarged view finds the map among the two right-hand panels.
+enum class MapPanelSource { Pixels, NativePage };
+// How the mod adapts one verified title: pure data. Nothing here applies
+// before the runtime has verified the title, its scene and its pause.
+struct AdaptationProfile {
+    Title title = Title::Unknown;
+    // The collection layout: gameplay on the left, the two top-screen pages
+    // stacked on the right (the upper one shows the page the game selected).
+    NormalizedRect gameplay{}, upperPanel{}, lowerPanel{};
+    MapPanelSource mapPanel = MapPanelSource::Pixels;
+    // v0.1.1 Portrait: the main screen alone in every verified scene. A title
+    // without it shows the main screen alone only where its scene verdict says
+    // so, and the collection's original layout everywhere else.
+    bool singleScreenEverywhere = false;
+    // LB/RB switch between the map and the other top-screen page inside the
+    // enlarged view.
+    bool pageNavigation = false;
+    // Native marker replay and its position identity validated for this title.
+    bool markerReplay = false;
+    // The gameplay screen is the DS touch screen: mouse/touch positions are
+    // moved from the enlarged image to the original panel, and hidden from
+    // the game while the enlarged view is open.
+    bool touchRemap = false;
+};
+// nullptr: no adaptation, the mod stays inert for that title.
+const AdaptationProfile* adaptation_profile(Title title) noexcept;
 
 struct Geometry {
     int left = 0;
@@ -51,6 +86,33 @@ struct NativePoint {
 // Geometry utility, not a validated touchscreen hook. Outside-bar coordinates
 // have inside=false and must not be delivered as touches.
 NativePoint screen_to_native(const Geometry& geometry, double x, double y) noexcept;
+
+// A pointer position in client pixels of the collection's window, as the user
+// aimed it at the mod's presentation (source shown in `shown`, both in pixels
+// of a backWidth x backHeight back buffer stretched over the client area),
+// moved to the same spot of `source` in the original layout, which is what
+// the collection maps to the DS touch screen. Outside the shown image (black
+// bars) inside=false: no touch.
+struct ClientPoint {
+    int x = 0, y = 0;
+    bool inside = false;
+};
+ClientPoint presented_to_original(const Geometry& shown, int backWidth, int backHeight,
+                                  const NormalizedRect& source, int clientWidth, int clientHeight,
+                                  int x, int y) noexcept;
+
+// The pointer is hidden from the game while the enlarged view reserves input
+// (the DS is paused under it) and, after that, until every mouse button is
+// released, so a click made in the view never becomes a touch on resume.
+class PointerReservation {
+public:
+    // True: report no pointer to the game now.
+    bool update(bool reserving, bool buttonsHeld) noexcept;
+    void reset() noexcept { held_ = false; }
+
+private:
+    bool held_ = false;
+};
 
 struct InputSnapshot {
     std::uint16_t buttons = 0;
@@ -112,6 +174,32 @@ private:
     std::uint64_t connectionEpoch_ = 0;
     std::uint64_t pendingGestureEpoch_ = 0;
 };
+
+// LB/RB inside the enlarged view. While the view reserves them (opening,
+// shown, or closing under the mod's pause), a press that begins is a page
+// command and that button is consumed until it is released, even after the
+// view closed: the DS computes trigger = (previous ^ current) & current
+// (dra01 0x18001fb90), so a button still held when emulation resumes would
+// otherwise be a new press. A button already held when the view opened is
+// not a command and passes unchanged, so resuming sees no new edge for it.
+// LB steps back and RB forward; both starting on one sample cancel out.
+// Disconnection is no evidence of a release: reservations survive it.
+struct PageInput {
+    std::uint16_t consumedButtons = 0;
+    int step = 0;
+};
+class PageButtonFilter {
+public:
+    PageInput update(std::uint16_t buttons, bool connected, bool reserving) noexcept;
+    void reset() noexcept { *this = PageButtonFilter{}; }
+    std::uint16_t reserved() const noexcept { return reserved_; }
+
+private:
+    std::uint16_t previous_ = 0, reserved_ = 0;
+    bool initialized_ = false;
+};
+// The page after a step among count pages, wrapping; page if count is 0.
+unsigned step_page(unsigned page, int step, unsigned count) noexcept;
 
 // Portrait shows the two pages of the DS top screen (map, Status) in two panels
 // whose order flips with native Select. Status always has the brown enemy panel
@@ -422,11 +510,20 @@ struct EmuTaskTitleFields {
     std::int32_t index = -1;    // +0x53c
     std::uint8_t ready = 0;     // +0x184
 };
+inline constexpr std::int32_t DawnModuleIndex = 0;
 inline constexpr std::int32_t PortraitModuleIndex = 1;
 inline constexpr std::int32_t StaticModuleIndex = 4;
 
+// Titles the detector may verify. Any other index is OtherTitle, as in
+// v0.1.1. Dawn stays off unless the experimental profile is enabled.
+struct TitleSet {
+    bool portrait = true;
+    bool dawn = false;
+};
+
 // A loaded module as the platform sees it. Valid only for a MEM_IMAGE x64 DLL
-// mapped at handle whose path is dra02.dll in the game.exe directory.
+// mapped at handle whose path is the title's DLL (dra01.dll for Dawn,
+// dra02.dll for Portrait) in the game.exe directory.
 struct TitleModuleImage {
     std::uintptr_t handle = 0;
     std::uint32_t imageSize = 0;
@@ -447,13 +544,13 @@ public:
     // The EmuTask published at game.exe+0x599FD0 with the derived vtable.
     virtual bool read_task(std::uintptr_t& task) noexcept = 0;
     virtual bool read_fields(std::uintptr_t task, EmuTaskTitleFields& fields) noexcept = 0;
-    // The currently loaded dra02.dll, 0 if none.
-    virtual std::uintptr_t portrait_module() noexcept = 0;
-    virtual TitleModuleImage module_image(std::uintptr_t handle) noexcept = 0;
-    virtual TitleFileKey file_key(const TitleModuleImage& image) noexcept = 0;
+    // The currently loaded DLL of title (dra02.dll, dra01.dll), 0 if none.
+    virtual std::uintptr_t title_module(Title title) noexcept = 0;
+    virtual TitleModuleImage module_image(Title title, std::uintptr_t handle) noexcept = 0;
+    virtual TitleFileKey file_key(Title title, const TitleModuleImage& image) noexcept = 0;
     // Expensive: the whole file's SHA-256 and PE identity against image, with
     // the file identity unchanged (key) before and after reading it.
-    virtual bool verify_file(const TitleModuleImage& image, const TitleFileKey& key) noexcept = 0;
+    virtual bool verify_file(Title title, const TitleModuleImage& image, const TitleFileKey& key) noexcept = 0;
 };
 
 enum class TitleReason {
@@ -463,7 +560,10 @@ enum class TitleReason {
 const char* title_reason_name(TitleReason reason) noexcept;
 
 struct TitleObservation {
-    // The only verdict that enables anything Portrait-specific.
+    // The verified title: Unknown unless reason is Verified. Only this enables
+    // anything title-specific.
+    Title title = Title::Unknown;
+    // title == PortraitOfRuin (kept for the v0.1.1 diagnostics).
     bool portrait = false;
     TitleReason reason = TitleReason::NoTask;
     // What +0x53c names (0 dra01, 1 dra02, 2 dra03). Diagnostic, never proof.
@@ -474,38 +574,48 @@ struct TitleObservation {
     std::uint64_t generation = 0;
 };
 
-// Fail-closed identification, once per Present. Portrait requires the native
-// observers' task, index 1 with +0x184 set, +0x528 equal to the loaded
-// dra02.dll, that module's image/path, its file hash, and an identical second
-// read of the fields bracketing those checks. While nothing changes, a frame
-// costs two field reads and a module lookup: the file is hashed once per
-// loaded image, its cheap file identity is re-checked on each new task epoch,
-// and a failed verification is retried at most MaxFileAttempts times per epoch.
+// Fail-closed identification, once per Present. A title in the enabled set
+// requires the native observers' task, its index (1 Portrait, 0 Dawn) with
+// +0x184 set, +0x528 equal to the loaded DLL of that title, that module's
+// image/path, its file hash, and an identical second read of the fields
+// bracketing those checks. While nothing changes, a frame costs two field
+// reads and a module lookup: each title's file is hashed once per loaded
+// image, its cheap file identity is re-checked on each new task epoch, and a
+// failed verification is retried at most MaxFileAttempts times per epoch.
 class TitleDetector {
 public:
     static constexpr unsigned MaxFileAttempts = 3;
     static constexpr std::uint64_t FileRetryMs = 5000;
+    explicit TitleDetector(TitleSet enabled = {}) noexcept : enabled_(enabled) {}
     // observedTask: the task the native observers validated (0 if none).
     TitleObservation update(ITitlePlatform& platform, std::uintptr_t observedTask,
                             std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept;
-    void reset() noexcept { *this = TitleDetector{}; }
+    void reset() noexcept { *this = TitleDetector{enabled_}; }
+    TitleSet enabled() const noexcept { return enabled_; }
     // File hashes attempted so far (diagnostic and tests).
     unsigned verifications() const noexcept { return verifications_; }
 
 private:
-    bool file_verified(ITitlePlatform& platform, const TitleModuleImage& image,
+    // Per title, so returning to a title already hashed costs no new hash.
+    struct FileCheck {
+        TitleModuleImage image{};
+        TitleFileKey key{};
+        bool haveImage = false, fileOk = false;
+        std::uint64_t keyEpoch = 0, retryAtMs = 0;
+        unsigned attempts = 0;
+    };
+    bool file_verified(ITitlePlatform& platform, Title title, const TitleModuleImage& image,
                        std::uint64_t taskEpoch, std::uint64_t nowMs) noexcept;
+    TitleSet enabled_{};
     TitleObservation last_{};
     bool haveLast_ = false;
     bool fastValid_ = false;
+    Title fastTitle_ = Title::Unknown;
     std::uintptr_t fastTask_ = 0, fastHandle_ = 0;
     std::uint64_t fastEpoch_ = 0;
     EmuTaskTitleFields fastFields_{};
-    TitleModuleImage image_{};
-    TitleFileKey key_{};
-    bool haveImage_ = false, fileOk_ = false;
-    std::uint64_t keyEpoch_ = 0, retryAtMs_ = 0;
-    unsigned attempts_ = 0, verifications_ = 0;
+    FileCheck files_[2]{};  // Portrait, Dawn
+    unsigned verifications_ = 0;
 };
 
 // What a supported title is doing, separate from which title it is. Only a
@@ -519,6 +629,13 @@ struct SceneVerdict {
     bool gameplay = false;
     // The sub-screen shows the real map now: the enlarged map may open.
     bool mapReady = false;
+    // The main screen alone shows what the title needs now. Used by titles
+    // without AdaptationProfile::singleScreenEverywhere; elsewhere the
+    // collection's original layout is shown.
+    bool singleScreen = false;
+    // With mapReady, the panel the native page puts the map in: 0 upper,
+    // 1 lower; -1 when the title does not tell (Portrait uses pixels).
+    int mapPanel = -1;
 };
 
 // Portrait's own state, read from dra02.dll FFEFA110...8744 (Ghidra 12.1.4;
@@ -542,6 +659,55 @@ inline constexpr std::uint8_t PortraitGameplayMode = 2, PortraitRunningState = 2
 // available=false (unreadable or inconsistent fields) is Unknown.
 SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool available) noexcept;
 
+// Dawn of Sorrow's own state, read from dra01.dll 52E20914...CD6E (Ghidra
+// 12.1.4; docs/DAWN-OF-SORROW.md). The GameThread loop 0x18000b700 calls
+// modes[0x18026c600][mode 0x1808eb248] each frame: 2 is gameplay (0x18002b1b0,
+// running while 0x180963ecc == 2; Start enters 0xa, the pause menu, which asks
+// the top screen for its own page 3), 3 the title screen, 5 game over, 0x16
+// the closing sequence, 0/1 game start/load. The top-screen manager
+// 0x180022100 shows page 0x180965748 and switches to the requested
+// 0x180965749. Pages 0 (map) and 1 (Status) are a pair: the shown page is
+// drawn on the first sub-screen bank and, unless the overlay flag
+// 0x18096574b is set, the other page on the second, so both stay live. Other
+// pages replace the pair (2 during some in-game events, 3 the pause menu, ...).
+// Game type 0x180964346 is 0 for the normal game; 1-5 are other modes.
+// Gameplay sub-states: 0/1 entering, 2 running, 3 room change, 4 an event's
+// own selection screen, 6 an area load with the game frozen (0x1808eb250 set,
+// 0x1800191f0), 5 and others unknown. Brightness fades run while the int32
+// frame count 0x1808f5c2c is nonzero; 0x1808f5c34 is the level (0 normal).
+// Event flags 0x180963ed4: 0x10000000 locks the page pair during a scripted
+// event (0x1801b68a0); 0x200001 blocks the game's own pause menu (Start).
+struct DawnStateFields {
+    std::uint8_t mode = 0xff;
+    std::uint8_t gameState = 0xff;
+    std::uint8_t gameType = 0xff;
+    std::uint8_t page = 0xff;
+    std::uint8_t requestedPage = 0xff;
+    std::uint8_t pageOverlay = 0xff;
+    std::uint8_t frozen = 0xff;
+    std::uint32_t eventFlags = 0xffffffffu;
+    std::int32_t fadeFrames = -1;
+    std::int32_t brightness = -1;
+};
+inline constexpr std::uint8_t DawnGameplayMode = 2, DawnRunningState = 2;
+inline constexpr std::uint32_t DawnPageLockFlag = 0x10000000u, DawnMenuBlockFlags = 0x00200001u;
+bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept;
+// No page decides alone. Single screen (and View as the map command) needs
+// normal-game gameplay in a known sub-state, the map/Status pair on the top
+// screen and no scripted page lock. The enlarged map additionally needs the
+// running sub-state, no page switch, no frozen game, no fade and the game's
+// own pause menu allowed. Everything else, unknown or unreadable included,
+// keeps the original layout and native Select.
+SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) noexcept;
+
+// The scene fields of whichever title was verified (the other part unused).
+struct TitleSceneFields {
+    Title title = Title::Unknown;
+    PortraitStateFields portrait{};
+    DawnStateFields dawn{};
+};
+SceneVerdict classify_scene(const TitleSceneFields& fields, bool available) noexcept;
+
 // What a View release asks of the map, decided from the current state only.
 enum class MapCommand { None, CloseVoluntary, Cancel, Open, Refuse };
 struct MapCommandInput {
@@ -553,7 +719,7 @@ struct MapCommandInput {
 };
 MapCommand map_command(const MapCommandInput& input) noexcept;
 
-struct PortraitGateInput {
+struct TitleGateInput {
     TitleObservation title{};
     bool pauseKnown = false;
     bool paused = false;
@@ -562,34 +728,42 @@ struct PortraitGateInput {
     bool modPause = false;
     SceneVerdict scene{};
 };
-struct PortraitGateState {
-    bool identity = false;  // Portrait-specific presentation, map, pause and marker may run
+struct TitleGateState {
+    bool identity = false;  // title-specific presentation, map, pause and marker may run
     bool input = false;     // the input filter may reserve, delay or chord View/Y
     bool gameplay = false;  // identity, and View is the map command (not native Select)
     bool mapReady = false;  // gameplay, input, and the enlarged map may open now
     bool identityChanged = false;
     bool inputChanged = false;
     bool gameplayChanged = false;
+    Title title = Title::Unknown;  // the title identity stands for
 };
 // Identity needs Confirmations consecutive verified observations of the same
-// module and task epoch; anything else revokes it at once. Input additionally
-// needs a known pause state that is either clear or the mod's own, so the
-// collection's menus (which pause the EmuTask) receive their original input.
-// Gameplay and mapReady come from the scene verdict and need identity.
-class PortraitGate {
+// title, module and task epoch; anything else revokes it at once. Input
+// additionally needs a known pause state that is either clear or the mod's
+// own, so the collection's menus (which pause the EmuTask) receive their
+// original input. Gameplay and mapReady come from the scene verdict and need
+// identity.
+class TitleGate {
 public:
     static constexpr unsigned Confirmations = 2;
-    PortraitGateState update(const PortraitGateInput& input) noexcept;
-    void reset() noexcept { *this = PortraitGate{}; }
+    TitleGateState update(const TitleGateInput& input) noexcept;
+    void reset() noexcept { *this = TitleGate{}; }
     bool identity() const noexcept { return identity_; }
     bool input() const noexcept { return input_; }
     bool gameplay() const noexcept { return gameplay_; }
+    Title title() const noexcept { return identity_ ? title_ : Title::Unknown; }
 
 private:
     unsigned streak_ = 0;
+    Title title_ = Title::Unknown;
     std::uintptr_t module_ = 0;
     std::uint64_t epoch_ = 0;
     bool identity_ = false, input_ = false, gameplay_ = false;
 };
+// The v0.1.1 names, for Portrait-only callers and tests.
+using PortraitGateInput = TitleGateInput;
+using PortraitGateState = TitleGateState;
+using PortraitGate = TitleGate;
 
 } // namespace dominus
