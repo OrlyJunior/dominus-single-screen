@@ -14,9 +14,10 @@ struct Snapshot {
     std::uint64_t gameCalls=0;
     bool reservedRequested=false;
 };
-// Receives raw state. The returned mask may suppress View (0x20) or Y (0x8000),
-// and may replay ONLY View when the chord recognizer delays its native action.
-// Y can never be injected. Every other button/analog field remains unchanged.
+// Receives raw state. The returned mask may suppress View (0x20), Y (0x8000),
+// LB (0x100) or RB (0x200), and may replay ONLY View when the chord recognizer
+// delays its native action. Y, LB and RB can never be injected. Every other
+// button/analog field remains unchanged.
 // fromGame=false is the observer's own poll; its returned mask is discarded.
 // Callback must be noexcept, nonblocking, and safe on the game's input thread.
 using Filter = std::uint16_t (*)(const Snapshot&,bool fromGame) noexcept;

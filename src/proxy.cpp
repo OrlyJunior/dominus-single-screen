@@ -14,6 +14,8 @@
 #include "dominus/input_observer.hpp"
 #include "dominus/live_controller.hpp"
 #include "dominus/marker_blink.hpp"
+#include "dominus/title_identity.hpp"
+#include "dominus/pointer_remap.hpp"
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -51,6 +53,9 @@ struct Runtime {
     bool minhook=false;
     bool nativeObserver=false;
     bool liveControls=false,nativePause=false,startEnabled=false;
+    // Experimental Dawn of Sorrow profile; off keeps Dawn inert as in v0.1.1
+    // and installs no pointer hook.
+    bool dawn=false,pointer=false;
     // Diagnostic only: logs D3D11 calls inside DrawGpuScreen, which no session
     // has reached (draw=0). Off unless the INI asks for it.
     bool resourceObserver=false;
@@ -122,6 +127,8 @@ void initialize(){
                     r.deferNative=GetPrivateProfileIntW(L"runtime",L"DeferNativeHooks",1,ini.c_str())!=0;
                     r.markerTrace=GetPrivateProfileIntW(L"runtime",L"EnableMarkerTrace",0,ini.c_str())==1;
                     r.markerReplay=GetPrivateProfileIntW(L"runtime",L"EnableMarkerBlink",0,ini.c_str())==1;
+                    r.dawn=GetPrivateProfileIntW(L"runtime",L"EnableExperimentalDawn",0,ini.c_str())==1;
+                    dominus::title::configure({true,r.dawn});
                     wchar_t live[32768]{};GetPrivateProfileStringW(L"runtime",L"DiagnosticDirectory",L"",live,32768,ini.c_str());
                     // Installed next to game.exe, logs must never land in the
                     // Steam library: default to the user's local app data, as
@@ -139,6 +146,7 @@ void initialize(){
                         CreateDirectoryW(r.liveDirectory.c_str(),nullptr);auto path=r.liveDirectory+L"\\runtime-"+std::to_wstring(GetCurrentProcessId())+L".log";
                         r.logFile=CreateFileW(path.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
                         diagnostic("observer-configured");
+                        diagnostic(r.dawn?"title,configured,portrait=1,dawn=1-experimental":"title,configured,portrait=1,dawn=0");
                     }
                     if(r.liveControls)dominus::marker::configure({r.markerTrace,r.markerReplay,true},r.liveDirectory.c_str(),diagnostic);
                 }
@@ -163,8 +171,12 @@ void follow_markers(IDXGISwapChain* chain,dominus::gfx::Request& request){
         device->GetImmediateContext(&context);
         if(context&&SUCCEEDED(chain->GetBuffer(0,__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))){
             dominus::gfx::SourceRect panels[2];dominus::live::panel_rects(panels[0],panels[1]);
-            const int mapPanel=request.mode==dominus::gfx::Mode::Map?(request.source.y>0.25f?1:0):-1;
-            const auto patch=dominus::marker::on_present(device,context,texture,panels,mapPanel,request.mode!=dominus::gfx::Mode::Original,dominus::live::pause_context());
+            // Only a title with validated replay is tracked (Portrait); the map
+            // panel stays the map's even while the view shows the other page.
+            const auto target=dominus::live::marker_target();
+            const bool tracking=target.tracking&&request.mode!=dominus::gfx::Mode::Original;
+            const int mapPanel=tracking&&request.mode==dominus::gfx::Mode::Map?target.mapPanel:-1;
+            const auto patch=dominus::marker::on_present(device,context,texture,panels,mapPanel,tracking,dominus::live::pause_context());
             request.patch=patch.texture;request.patchLeft=patch.left;request.patchTop=patch.top;
         }
     }
@@ -193,6 +205,11 @@ void compose(IDXGISwapChain* chain,UINT flags){
     dominus::gfx::Request request;
     {std::lock_guard<std::mutex> lock(r.requestMutex);request=r.request;}
     if(r.supported&&r.liveControls){DXGI_SWAP_CHAIN_DESC desc{};chain->GetDesc(&desc);request=dominus::live::frame(desc.OutputWindow);follow_markers(chain,request);}
+    // Touch-remap titles: hand the pointer adapter what this Present really
+    // shows (a failed composition leaves the original layout: no remap).
+    struct PointerScope{dominus::pointer::View view{};bool on=false;~PointerScope(){if(on)dominus::pointer::set_view(view);}} pointer;
+    bool pointerRemap=false;
+    if(r.pointer){const auto policy=dominus::live::pointer_policy();pointer.on=true;pointer.view.hide=policy.hide;pointerRemap=policy.remap;}
     if(request.mode==dominus::gfx::Mode::Original)return;
     std::shared_ptr<Chain> state;
     {std::lock_guard<std::mutex> lock(r.chainsMutex);auto i=r.chains.find(chain);if(i!=r.chains.end())state=i->second;else if(r.chains.size()<16){state=std::make_shared<Chain>();r.chains.emplace(chain,state);}}
@@ -210,7 +227,15 @@ void compose(IDXGISwapChain* chain,UINT flags){
                                    dominus::gfx::sample_grid(device,context,texture,second,dominus::PanelColumns,dominus::PanelRows,b.data());
                 dominus::live::panels_sampled(sampled?a.data():nullptr,sampled?b.data():nullptr,static_cast<unsigned>(a.size()));
             }
-            if(state->presenter.compose(device,context,texture,request))++r.compositions;else {const auto failures=++r.fallbacks;if(failures<=3||failures%600==0){D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);char line[240]{};std::snprintf(line,sizeof(line),"compose-rejected,fl=0x%x,size=%ux%u,fmt=%u,samples=%u,failures=%llu",unsigned(device->GetFeatureLevel()),desc.Width,desc.Height,unsigned(desc.Format),desc.SampleDesc.Count,static_cast<unsigned long long>(failures));diagnostic(line);}}
+            if(state->presenter.compose(device,context,texture,request)){
+                ++r.compositions;
+                if(pointerRemap&&request.mode==dominus::gfx::Mode::Gameplay){
+                    D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
+                    pointer.view.remap=true;pointer.view.backWidth=static_cast<int>(desc.Width);pointer.view.backHeight=static_cast<int>(desc.Height);
+                    pointer.view.shown=dominus::fit_4_3(pointer.view.backWidth,pointer.view.backHeight,request.integerScale?dominus::ScaleMode::Integer:dominus::ScaleMode::Fit);
+                    pointer.view.source={request.source.x,request.source.y,request.source.width,request.source.height};
+                }
+            }else {const auto failures=++r.fallbacks;if(failures<=3||failures%600==0){D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);char line[240]{};std::snprintf(line,sizeof(line),"compose-rejected,fl=0x%x,size=%ux%u,fmt=%u,samples=%u,failures=%llu",unsigned(device->GetFeatureLevel()),desc.Width,desc.Height,unsigned(desc.Format),desc.SampleDesc.Count,static_cast<unsigned long long>(failures));diagnostic(line);}}
         }else ++r.fallbacks;
     }else ++r.fallbacks;
     if(texture)texture->Release();if(context)context->Release();if(device)device->Release();
@@ -221,7 +246,8 @@ void start_live_controls(){
     static std::once_flag once;auto& r=rt();
     if(!r.supported||!r.liveControls)return;
     // The collection receives the Xbox pad through Steam Input, not XInput.
-    std::call_once(once,[&]{dominus::native::enable_pause_commands(r.nativePause);dominus::input::initialize(diagnostic);dominus::input::initialize_steam(GetModuleHandleW(nullptr),diagnostic);dominus::live::initialize(r.liveDirectory.c_str(),r.startEnabled,diagnostic);});
+    // The pointer adapter exists only with the experimental Dawn profile.
+    std::call_once(once,[&]{dominus::native::enable_pause_commands(r.nativePause);dominus::input::initialize(diagnostic);dominus::input::initialize_steam(GetModuleHandleW(nullptr),diagnostic);if(r.dawn)r.pointer=dominus::pointer::initialize(GetModuleHandleW(nullptr),diagnostic);dominus::live::initialize(r.liveDirectory.c_str(),r.startEnabled,diagnostic);});
 }
 // Native hooks, then live controls. Every validated session (late attach)
 // installed them after the game had built its EmuTask. As an installed proxy,

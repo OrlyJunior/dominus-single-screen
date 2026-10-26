@@ -9,13 +9,16 @@
 
 namespace dominus::live {
 namespace {
-// Exact Portrait preset observed at 1920x1080 with the collection layout that
-// shows gameplay (left, 1280x960) plus map and Status in the two right-hand
-// 640x480 panels. Their order differed between sessions (user screenshots,
-// 23/10/2026; native Select suspected), so the map panel is chosen from
-// pixels each time View opens it.
-constexpr gfx::SourceRect GameplayRect{0.f,1.f/18.f,2.f/3.f,8.f/9.f};
-constexpr gfx::SourceRect UpperRightRect{2.f/3.f,1.f/18.f,1.f/3.f,4.f/9.f},LowerRightRect{2.f/3.f,0.5f,1.f/3.f,4.f/9.f};
+// The collection layout (gameplay left, map and Status in the two right-hand
+// panels) comes from the verified title's AdaptationProfile. Portrait keeps
+// the exact v0.1.1 preset observed at 1920x1080; its panel order differed
+// between sessions (native Select), so its map panel is chosen from pixels
+// each time View opens it. Dawn reads it from its native page.
+gfx::SourceRect rect(const NormalizedRect& r) noexcept {return {r.x,r.y,r.width,r.height};}
+const AdaptationProfile& layout_of(const AdaptationProfile* profile) noexcept {
+    // Without a verified title the marker probe still needs two stable regions.
+    return profile?*profile:*adaptation_profile(Title::PortraitOfRuin);
+}
 // One frame normally suffices; past this the default panel is used.
 constexpr ULONGLONG ChooseBudgetMs=500;
 // A View handed back to the game (mod off, or map not allowed) is held this
@@ -26,31 +29,42 @@ struct State {
     bool ready=false,enabled=false,focused=false,map=false,disconnected=false;
     ULONGLONG replayUntil=0;
     bool nativeReady=false,mapAllowed=false;
-    // Map panel selection pending before the pause request.
+    // Map panel selection pending before the pause request (Portrait).
     bool choosing=false,panelsWanted=false,panelsReady=false;
     MapPanel choice=MapPanel::Unknown;
     double upperBrown=0,lowerBrown=0;
     ULONGLONG chooseDeadline=0;
-    gfx::SourceRect mapRect=UpperRightRect;
+    gfx::SourceRect mapRect=rect(layout_of(nullptr).upperPanel);
+    // The panel holding the map while the enlarged view is open (0 upper,
+    // 1 lower) and the page shown there (0 the map, 1 the other page).
+    int mapPanel=0;
+    unsigned page=0;
+    int pageSteps=0;
+    PageButtonFilter pages;
     unsigned controller=UINT32_MAX;
     std::uint64_t connection=0,epoch=0,revision=0,token=0,leaseEpoch=0,leaseRevision=0;
     std::uint64_t request=0,awaiting=0,lastCommand=0;
     bool voluntaryClose=false,releaseConfirmed=false;
     std::uint64_t releasedToken=0,releasedEpoch=0;
     marker::PauseContext pauseContext{};
+    MarkerTarget markerTarget{};
+    PointerPolicy pointerPolicy{};
     native::PauseCommandKind waitingKind=native::PauseCommandKind::Acquire;
     DWORD lastPoll=0;
     InputAction action=InputAction::None;
     InputRecognizer recognizer;
-    // Portrait features run only while title_identity verifies Portrait; the
-    // filter also stays out of pauses the mod does not own (collection menus).
-    PortraitGate gate;
+    // Title features run only while title_identity verifies a title with an
+    // adaptation profile; the filter also stays out of pauses the mod does
+    // not own (collection menus).
+    TitleGate gate;
+    Title title=Title::Unknown;
+    const AdaptationProfile* profile=nullptr;
     bool identityActive=false,inputActive=false;
-    // Portrait's own scene: View is the map command only in gameplay, and the
-    // map opens only while the sub-screen shows it (classify_portrait_scene).
+    // The title's own scene: View is the map command only in gameplay, and
+    // the map opens only while the sub-screen shows it (classify_scene).
     bool gameplay=false,mapReady=false;
     SceneVerdict scene{};
-    PortraitStateFields sceneFields{};
+    TitleSceneFields sceneFields{};
     bool sceneAvailable=false;
     std::uint64_t titleGeneration=0;
     std::wstring directory;
@@ -58,31 +72,59 @@ struct State {
 };
 State& state(){static auto* s=new State;return *s;}
 void log(const char* name) noexcept {if(state().log)state().log(name);}
+const char* title_name(Title title) noexcept {
+    switch(title){case Title::PortraitOfRuin:return "portrait";case Title::DawnOfSorrow:return "dawn";case Title::OrderOfEcclesia:return "ecclesia";default:return "none";}
+}
 void clear_release_tracking(State& s) noexcept {
     s.voluntaryClose=s.releaseConfirmed=false;
     s.releasedToken=s.releasedEpoch=0;
 }
-void log_scene(State& s,const char* what) noexcept {
-    char line[200]{};const auto& f=s.sceneFields;
-    std::snprintf(line,sizeof(line),"%s,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,gameplay=%u,mapReady=%u",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(s.gameplay),unsigned(s.mapReady));log(line);
+// What the scene log reports; Dawn's fade counter is reduced to "fading"
+// so a fade does not log every frame.
+bool scene_key_changed(const TitleSceneFields& a,const TitleSceneFields& b) noexcept {
+    if(a.title!=b.title)return true;
+    if(a.title==Title::DawnOfSorrow){
+        const auto& x=a.dawn;const auto& y=b.dawn;
+        constexpr auto Flags=DawnPageLockFlag|DawnMenuBlockFlags;
+        return x.mode!=y.mode||x.gameState!=y.gameState||x.gameType!=y.gameType||x.page!=y.page||x.requestedPage!=y.requestedPage||
+               x.pageOverlay!=y.pageOverlay||x.frozen!=y.frozen||(x.eventFlags&Flags)!=(y.eventFlags&Flags)||
+               (x.fadeFrames!=0)!=(y.fadeFrames!=0)||(x.brightness!=0)!=(y.brightness!=0);
+    }
+    const auto& x=a.portrait;const auto& y=b.portrait;
+    return x.mode!=y.mode||x.page!=y.page||x.requestedPage!=y.requestedPage;
 }
-void update_gate(State& s,const TitleObservation& title,const title::PortraitSceneSample& sample,const native::Status& st) noexcept {
-    const auto scene=classify_portrait_scene(sample.fields,sample.available);
+void log_scene(State& s,const char* what) noexcept {
+    char line[260]{};
+    if(s.sceneFields.title==Title::DawnOfSorrow){
+        const auto& f=s.sceneFields.dawn;
+        std::snprintf(line,sizeof(line),"%s,title=dawn,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,overlay=%u,frozen=%u,flags=0x%x,fade=%d/%d,single=%u,gameplay=%u,mapReady=%u,mapPanel=%d",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(f.pageOverlay),unsigned(f.frozen),f.eventFlags,f.fadeFrames,f.brightness,unsigned(s.scene.singleScreen),unsigned(s.gameplay),unsigned(s.mapReady),s.scene.mapPanel);
+    }else{
+        const auto& f=s.sceneFields.portrait;
+        std::snprintf(line,sizeof(line),"%s,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,gameplay=%u,mapReady=%u",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(s.gameplay),unsigned(s.mapReady));
+    }
+    log(line);
+}
+void update_gate(State& s,const TitleObservation& title,const title::SceneSample& sample,const native::Status& st) noexcept {
+    const auto scene=classify_scene(sample.fields,sample.available);
     const auto gate=s.gate.update({title,st.pauseKnown,st.paused,s.token!=0||s.awaiting!=0||st.stalePause,scene});
-    const bool sceneChanged=scene.scene!=s.scene.scene||gate.gameplay!=s.gameplay||gate.mapReady!=s.mapReady||sample.available!=s.sceneAvailable||
-                            sample.fields.mode!=s.sceneFields.mode||sample.fields.page!=s.sceneFields.page||sample.fields.requestedPage!=s.sceneFields.requestedPage;
+    const bool sceneChanged=scene.scene!=s.scene.scene||scene.singleScreen!=s.scene.singleScreen||gate.gameplay!=s.gameplay||gate.mapReady!=s.mapReady||
+                            sample.available!=s.sceneAvailable||scene_key_changed(sample.fields,s.sceneFields);
     s.scene=scene;s.sceneFields=sample.fields;s.sceneAvailable=sample.available;s.gameplay=gate.gameplay;s.mapReady=gate.mapReady;
     if(sceneChanged&&gate.identity)log_scene(s,"live,scene");
     if(title.generation!=s.titleGeneration){
-        s.titleGeneration=title.generation;char line[220]{};
-        std::snprintf(line,sizeof(line),"title,portrait=%u,reason=%s,index=%d,ready=%u,module=0x%llx,epoch=%llu",unsigned(title.portrait),title_reason_name(title.reason),title.fields.index,unsigned(title.fields.ready),static_cast<unsigned long long>(title.fields.module),static_cast<unsigned long long>(title.taskEpoch));log(line);
+        s.titleGeneration=title.generation;char line[240]{};
+        std::snprintf(line,sizeof(line),"title,portrait=%u,reason=%s,index=%d,ready=%u,module=0x%llx,epoch=%llu,title=%s",unsigned(title.portrait),title_reason_name(title.reason),title.fields.index,unsigned(title.fields.ready),static_cast<unsigned long long>(title.fields.module),static_cast<unsigned long long>(title.taskEpoch),title_name(title.title));log(line);
     }
-    if(gate.identityChanged)log(gate.identity?"live,title-gate,portrait-verified":"live,title-gate,portrait-lost");
+    if(gate.identityChanged){char line[80]{};std::snprintf(line,sizeof(line),"live,title-gate,%s-%s",title_name(gate.identity?gate.title:s.title),gate.identity?"verified":"lost");log(line);}
     // A gesture never spans a context change; the next activation starts from
     // neutral (a View still held then is drained, never acted on).
     if(gate.inputChanged){s.recognizer.reset();log(gate.input?"live,input-gate,active":"live,input-gate,passthrough");}
     if(!gate.identity)s.replayUntil=0;
-    s.identityActive=gate.identity;s.inputActive=gate.input;
+    const auto* profile=gate.identity?adaptation_profile(gate.title):nullptr;
+    // Page reservations survive a foreign pause (the input gate), not a title change.
+    if(gate.title!=s.title||!profile){s.pages.reset();s.page=0;s.pageSteps=0;}
+    s.title=gate.title;s.profile=profile;
+    s.identityActive=gate.identity&&profile;s.inputActive=gate.input&&profile;
 }
 std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
     auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);
@@ -99,9 +141,9 @@ std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
         // pause first, on this (pause) thread, or the game stays frozen.
         if(s.token&&native::release_owned_now()){s.token=0;s.map=false;log("live,controller-lost,map-pause-released-first");}
     }
-    // Outside verified Portrait gameplay every button passes exactly as read:
-    // no View/Y reservation, delay or chord. Only a View pulse that Portrait
-    // already started may finish, and only while Portrait is still verified.
+    // Outside verified gameplay every button passes exactly as read: no
+    // View/Y reservation, delay or chord. Only a View pulse that the title
+    // already started may finish, and only while it is still verified.
     if(!s.inputActive){
         if(s.replayUntil&&fromGame&&s.identityActive){if(GetTickCount64()<s.replayUntil)return static_cast<std::uint16_t>(raw.buttons|ButtonView);s.replayUntil=0;}
         return raw.buttons;
@@ -116,6 +158,15 @@ std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
     else if(raw.buttons&ButtonView)s.replayUntil=0;
     auto forwarded=result.forwardedButtons;
     if(s.replayUntil&&fromGame){if(now<s.replayUntil)forwarded|=ButtonView;else s.replayUntil=0;}
+    // LB/RB belong to the enlarged view from its request until the release
+    // of its pause is confirmed; a press made then never reaches the game,
+    // also when the view closes with the button still held.
+    if(s.profile&&s.profile->pageNavigation){
+        const bool reserving=s.map||s.choosing||s.awaiting!=0;
+        const auto pages=s.pages.update(raw.buttons,raw.connected,reserving);
+        if(pages.step&&s.map)s.pageSteps+=pages.step;
+        forwarded=static_cast<std::uint16_t>(forwarded&~pages.consumedButtons);
+    }
     return forwarded;
 }
 bool queue(native::PauseCommandKind kind) noexcept {
@@ -129,7 +180,7 @@ bool queue(native::PauseCommandKind kind) noexcept {
 void close(bool voluntary=false) noexcept {
     auto& s=state();
     const bool hadOwnedMap=s.map&&s.token!=0&&!s.awaiting;
-    s.choosing=s.panelsWanted=s.panelsReady=false;s.map=false;
+    s.choosing=s.panelsWanted=s.panelsReady=false;s.map=false;s.page=0;s.pageSteps=0;
     if(s.token&&!s.awaiting){
         if(queue(native::PauseCommandKind::Release)){
             if(voluntary&&hadOwnedMap){
@@ -146,19 +197,34 @@ void close(bool voluntary=false) noexcept {
 void finish_choice(ULONGLONG now) noexcept {
     auto& s=state();
     if(!s.panelsReady&&now<=s.chooseDeadline)return;
+    const auto& layout=layout_of(s.profile);
     const char* reason=s.panelsReady?(s.choice==MapPanel::Unknown?"undecided-default-upper":"pixels"):"timeout-default-upper";
-    s.mapRect=s.panelsReady&&s.choice==MapPanel::Second?LowerRightRect:UpperRightRect;
-    char line[200]{};std::snprintf(line,sizeof(line),"live,map-panel,%s,reason=%s,upperBrown=%.3f,lowerBrown=%.3f",s.mapRect.y>0.25f?"lower":"upper",reason,s.upperBrown,s.lowerBrown);log(line);
+    s.mapPanel=s.panelsReady&&s.choice==MapPanel::Second?1:0;
+    s.mapRect=rect(s.mapPanel?layout.lowerPanel:layout.upperPanel);
+    char line[200]{};std::snprintf(line,sizeof(line),"live,map-panel,%s,reason=%s,upperBrown=%.3f,lowerBrown=%.3f",s.mapPanel?"lower":"upper",reason,s.upperBrown,s.lowerBrown);log(line);
     s.choosing=s.panelsWanted=s.panelsReady=false;
+    if(!s.awaiting&&!s.token)queue(native::PauseCommandKind::Acquire);
+}
+// The native page tells where the map is (Dawn): no pixels, no delay.
+void open_native_page(State& s) noexcept {
+    const auto& layout=layout_of(s.profile);
+    s.mapPanel=s.scene.mapPanel;s.page=0;s.pageSteps=0;
+    s.mapRect=rect(s.mapPanel?layout.lowerPanel:layout.upperPanel);
+    char line[120]{};std::snprintf(line,sizeof(line),"live,map-panel,%s,reason=native-page",s.mapPanel?"lower":"upper");log(line);
     if(!s.awaiting&&!s.token)queue(native::PauseCommandKind::Acquire);
 }
 }
 bool panels_wanted(gfx::SourceRect& first,gfx::SourceRect& second) noexcept {
     auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);
     if(!s.panelsWanted)return false;
-    s.panelsWanted=false;first=UpperRightRect;second=LowerRightRect;return true;
+    const auto& layout=layout_of(s.profile);
+    s.panelsWanted=false;first=rect(layout.upperPanel);second=rect(layout.lowerPanel);return true;
 }
-void panel_rects(gfx::SourceRect& upper,gfx::SourceRect& lower) noexcept {upper=UpperRightRect;lower=LowerRightRect;}
+void panel_rects(gfx::SourceRect& upper,gfx::SourceRect& lower) noexcept {
+    auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);
+    const auto& layout=layout_of(s.profile);
+    upper=rect(layout.upperPanel);lower=rect(layout.lowerPanel);
+}
 void panels_sampled(const unsigned* first,const unsigned* second,unsigned count) noexcept {
     auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);
     if(!s.choosing)return;
@@ -178,10 +244,11 @@ gfx::Request frame(HWND window) noexcept {
     try {
         // Poll outside our state lock: the adapter invokes filter synchronously.
         input::on_present();auto st=native::status_snapshot();auto reply=native::pause_reply_snapshot();
-        // Outside our lock: the first sight of a loaded dra02.dll hashes it once.
+        // Outside our lock: the first sight of a loaded title DLL hashes it once.
         const auto title=title::observe(st.taskObserved?st.task:0,st.taskEpoch);
-        const auto sceneSample=title::portrait_scene(title);
+        const auto sceneSample=title::scene(title);
         auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);if(!s.ready)return {};
+        s.markerTarget={};s.pointerPolicy={};
         const auto foreground=GetForegroundWindow();s.focused=foreground==window||(foreground&&IsChild(window,foreground));
         s.epoch=st.taskEpoch;s.revision=st.pauseRevision;
         s.nativeReady=st.hooksInstalled&&st.pauseKnown&&st.pauseCommandsEnabled&&st.lifecycleHooksInstalled;
@@ -213,8 +280,8 @@ gfx::Request frame(HWND window) noexcept {
                 if(command==1)s.action=InputAction::ToggleMap;else if(command==2)s.action=InputAction::ToggleMod;else if(command==3)releaseStale=true;
             }
         }
-        // Nothing requested while (or before) Portrait was verified applies to
-        // another title; an owned map pause is released below by close().
+        // Nothing requested while (or before) the title was verified applies
+        // to another title; an owned map pause is released below by close().
         if(!s.identityActive){s.action=InputAction::None;releaseStale=false;}
         // Recovery for a pause the mod created that nothing owns any more (the
         // collection's menu stacked on it and closed without unpausing): an
@@ -235,7 +302,13 @@ gfx::Request frame(HWND window) noexcept {
             switch(map_command({s.map&&s.token!=0,s.token!=0,s.choosing,st.paused,s.mapReady})){
             case MapCommand::CloseVoluntary:close(true);break;
             case MapCommand::Cancel:close(false);break;
-            case MapCommand::Open:clear_release_tracking(s);s.choosing=s.panelsWanted=true;s.panelsReady=false;s.chooseDeadline=GetTickCount64()+ChooseBudgetMs;break;
+            case MapCommand::Open:
+                clear_release_tracking(s);
+                if(s.profile->mapPanel==MapPanelSource::NativePage){
+                    if(s.scene.mapPanel==0||s.scene.mapPanel==1)open_native_page(s);
+                    else log_scene(s,"live,map-refused");
+                }else{s.choosing=s.panelsWanted=true;s.panelsReady=false;s.chooseDeadline=GetTickCount64()+ChooseBudgetMs;}
+                break;
             // Gameplay without a map to show (fade, death, sub-screen switch): nothing.
             case MapCommand::Refuse:log_scene(s,"live,map-refused");break;
             case MapCommand::None:break;
@@ -243,9 +316,18 @@ gfx::Request frame(HWND window) noexcept {
         }
         s.action=InputAction::None;
         if(s.choosing){if(st.paused)close(false);else finish_choice(GetTickCount64());}
-        // View is the map command only in Portrait gameplay; elsewhere (title,
-        // menus, sequences, unknown states) it stays the game's own Select. A
-        // stale mod pause keeps View as a mod command so it can release it.
+        // LB/RB steps collected by the filter apply only to a shown view.
+        if(s.pageSteps){
+            if(s.map&&s.profile&&s.profile->pageNavigation){
+                const auto previous=s.page;s.page=step_page(s.page,s.pageSteps,2);
+                if(s.page!=previous)log(s.page?"live,view-page,status":"live,view-page,map");
+            }
+            s.pageSteps=0;
+        }
+        // View is the map command only in the title's gameplay; elsewhere
+        // (title, menus, sequences, unknown states) it stays the game's own
+        // Select. A stale mod pause keeps View as a mod command so it can
+        // release it.
         s.mapAllowed=s.identityActive&&s.gameplay&&s.enabled&&s.focused&&s.nativeReady&&(!st.paused||s.token||st.stalePause);
         const bool waitingRelease=s.awaiting!=0&&s.waitingKind==native::PauseCommandKind::Release;
         if(s.releaseConfirmed&&(st.paused||!st.pauseKnown||st.taskEpoch!=s.releasedEpoch))clear_release_tracking(s);
@@ -259,14 +341,31 @@ gfx::Request frame(HWND window) noexcept {
         s.pauseContext.taskEpoch=st.taskEpoch;
         s.pauseContext.leaseToken=s.token?s.token:s.releasedToken;
         s.pauseContext.connectionEpoch=s.connection;
+        // The pointer stays hidden from the paused game while the view holds input.
+        if(s.identityActive&&s.profile->touchRemap)s.pointerPolicy.hide=s.map||s.choosing||s.awaiting!=0;
         if(!s.identityActive||!s.enabled||!s.focused||!s.nativeReady||(st.paused&&!s.token))return {};
-        // Exact preset observed in the current real Portrait session. The
-        // original compositor still renders every screen; no game setting changes.
-        if(s.map)return {gfx::Mode::Map,s.mapRect,false};
-        return {gfx::Mode::Gameplay,GameplayRect,false};
+        // The original compositor still renders every screen; no game setting
+        // changes. The marker follows only titles whose replay was validated.
+        const auto& layout=*s.profile;
+        if(s.map){
+            s.markerTarget={layout.markerReplay,s.mapPanel};
+            if(s.page==0)return {gfx::Mode::Map,s.mapRect,false};
+            return {gfx::Mode::Map,rect(s.mapPanel?layout.upperPanel:layout.lowerPanel),false};
+        }
+        // A title that needs its top screen now keeps the original layout.
+        if(!layout.singleScreenEverywhere&&!s.scene.singleScreen)return {};
+        s.markerTarget={layout.markerReplay,-1};
+        s.pointerPolicy.remap=layout.touchRemap;
+        return {gfx::Mode::Gameplay,rect(layout.gameplay),false};
     } catch(...) {return {};}
 }
 marker::PauseContext pause_context() noexcept {
     auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);return s.pauseContext;
+}
+MarkerTarget marker_target() noexcept {
+    auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);return s.markerTarget;
+}
+PointerPolicy pointer_policy() noexcept {
+    auto& s=state();std::lock_guard<std::mutex> lock(s.mutex);return s.pointerPolicy;
 }
 }

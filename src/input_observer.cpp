@@ -46,10 +46,11 @@ struct State {
 };
 State& state(){static auto* s=new State;return *s;}
 void log(const char* message) noexcept {const auto output=state().log.load();if(output)output(message);}
-// Removes View/Y unless the mask keeps them; View alone may be replayed.
+// Removes View/Y and LB/RB unless the mask keeps them; View alone may be
+// replayed. Y, LB and RB are never added.
 WORD forward(WORD raw,WORD mask,unsigned controller,const char* source) noexcept {
-    constexpr WORD reserved=0x8020;
-    const WORD forwarded=static_cast<WORD>((raw&~reserved)|(raw&0x8000&mask)|(mask&0x0020));
+    constexpr WORD reserved=0x8320,suppressible=0x8300;
+    const WORD forwarded=static_cast<WORD>((raw&~reserved)|(raw&suppressible&mask)|(mask&0x0020));
     if(forwarded!=raw){
         const auto count=state().filteredCalls.fetch_add(1)+1;
         if(count<=16||count%600==0){char line[160]{};std::snprintf(line,sizeof(line),"%s,filtered,slot=%u,raw=0x%04x,forwarded=0x%04x,count=%llu",source,controller,unsigned(raw),unsigned(forwarded),count);log(line);}

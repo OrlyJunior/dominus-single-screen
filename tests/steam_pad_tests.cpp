@@ -257,6 +257,28 @@ void inactive_title_gate_forwards_every_action_combination_unchanged() {
     input::set_filter(nullptr);
     CHECK(abiFaults == 0);
 }
+// The live filter of a page-navigation title (Dawn) consumes LB/RB pressed in
+// the enlarged view: the real builder's output loses exactly those bits, and
+// a filter can never add LB, RB or Y that the player is not pressing.
+std::uint16_t consume_rb(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons & ~ButtonRightShoulder); }
+std::uint16_t try_inject(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons | PageButtons | ButtonY); }
+void page_buttons_can_be_consumed_but_never_injected() {
+    CHECK(poll(bit(L1)).buttons == ButtonLeftShoulder && poll(bit(R1)).buttons == ButtonRightShoulder);
+    input::set_filter(consume_rb);
+    poll(0);
+    CHECK(poll(bit(R1)).buttons == 0);
+    CHECK(poll(bit(R1) | bit(L1) | bit(A)).buttons == (ButtonLeftShoulder | 0x1000));
+    CHECK(poll(bit(L2) | bit(R1)).leftTrigger == 0x1e);
+    input::set_filter(try_inject);
+    for (std::uint32_t buttons = 0; buttons < (1u << Count); buttons += 7) {
+        input::set_filter(nullptr);
+        const auto original = poll(buttons);
+        input::set_filter(try_inject);
+        CHECK(poll(buttons).buttons == original.buttons);
+    }
+    input::set_filter(nullptr);
+    CHECK(abiFaults == 0);
+}
 void shutdown_restores_original_code_path() {
     input::shutdown();
     CHECK(poll(bit(Select) | bit(Y)).buttons == (ButtonView | ButtonY));
@@ -277,6 +299,7 @@ int main(int argc, char** argv) {
         {"every_pad_slot_of_one_controller_is_filtered_once", every_pad_slot_of_one_controller_is_filtered_once},
         {"non_steam_paths_and_disconnects_are_untouched", non_steam_paths_and_disconnects_are_untouched},
         {"inactive_title_gate_forwards_every_action_combination_unchanged", inactive_title_gate_forwards_every_action_combination_unchanged},
+        {"page_buttons_can_be_consumed_but_never_injected", page_buttons_can_be_consumed_but_never_injected},
         {"shutdown_restores_original_code_path", shutdown_restores_original_code_path},
     };
     int failures = 0;
