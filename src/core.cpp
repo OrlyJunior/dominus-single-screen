@@ -629,7 +629,8 @@ InputResult InputRecognizer::update(const InputSnapshot& input, const InputPolic
     return finish(0);
 }
 
-PageInput PageButtonFilter::update(std::uint16_t buttons, bool connected, bool reserving) noexcept {
+PageInput PageButtonFilter::update(std::uint16_t buttons, bool connected, bool reserving,
+                                   std::uint16_t reservable) noexcept {
     PageInput result{};
     if (!connected) {
         // No release evidence: keep reservations, and do not take buttons
@@ -637,19 +638,19 @@ PageInput PageButtonFilter::update(std::uint16_t buttons, bool connected, bool r
         initialized_ = false;
         return result;
     }
-    const auto pressed = static_cast<std::uint16_t>(buttons & PageButtons);
     if (!initialized_) {
-        previous_ = pressed;
+        previous_ = buttons;
         initialized_ = true;
     }
-    const auto edges = static_cast<std::uint16_t>(pressed & ~previous_);
-    if (reserving && edges) {
-        reserved_ = static_cast<std::uint16_t>(reserved_ | edges);
+    const auto edges = static_cast<std::uint16_t>(buttons & ~previous_);
+    if (reserving) {
+        const auto mask = static_cast<std::uint16_t>((reservable | PageButtons) & ~ButtonView);
+        reserved_ = static_cast<std::uint16_t>(reserved_ | (edges & mask));
         result.step = ((edges & ButtonRightShoulder) ? 1 : 0) - ((edges & ButtonLeftShoulder) ? 1 : 0);
     }
-    result.consumedButtons = static_cast<std::uint16_t>(pressed & reserved_);
-    reserved_ = static_cast<std::uint16_t>(reserved_ & pressed);
-    previous_ = pressed;
+    result.consumedButtons = static_cast<std::uint16_t>(buttons & reserved_);
+    reserved_ = static_cast<std::uint16_t>(reserved_ & buttons);
+    previous_ = buttons;
     return result;
 }
 

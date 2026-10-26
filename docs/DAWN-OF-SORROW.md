@@ -40,13 +40,18 @@ generically.
   0x14002aef0), so nothing is triggered while the view is shown.
 - [FACT] dra01 detects presses as `trigger = (previous ^ current) & current`
   (0x18001fb90): a button still held when emulation resumes would be a new press.
-- Rule (`PageButtonFilter`): from the View release that requests the view until
-  the release of its pause is confirmed, a LB/RB press that begins is a page
-  command and that button is consumed **until it is released, also after the
-  view closed**. A button already held when the view opened is not a command
-  and passes unchanged, so resuming sees no new edge. Both pressed together
-  cancel out. Other buttons are never touched; Y, LB and RB can never be added
-  to the game's input (`input_observer` forward()).
+- Rule (`PageButtonFilter` with `ViewReservableButtons`): from the View release
+  that requests the view until the release of its pause is confirmed, the view
+  owns the controller. A LB/RB press that begins is a page command; that press,
+  and any other one that begins then (A, B, X, Y, Start, the d-pad, ...), is
+  consumed **until the button is released, also after the view closed**. A
+  button already held when the view opened passes unchanged, so resuming sees
+  no new edge for it. LB and RB pressed together cancel out. View stays the
+  recognizer's. The filter can only withhold presses: no button can be added
+  to the game's input except the recognizer's View replay (`input_observer`
+  forward()).
+- Limit: analog sticks and triggers are never filtered; a stick held across the
+  close acts as soon as the game resumes, as it would natively.
 
 ## Identification
 

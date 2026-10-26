@@ -158,12 +158,13 @@ std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
     else if(raw.buttons&ButtonView)s.replayUntil=0;
     auto forwarded=result.forwardedButtons;
     if(s.replayUntil&&fromGame){if(now<s.replayUntil)forwarded|=ButtonView;else s.replayUntil=0;}
-    // LB/RB belong to the enlarged view from its request until the release
-    // of its pause is confirmed; a press made then never reaches the game,
-    // also when the view closes with the button still held.
+    // The enlarged view owns the controller from the View release that asks
+    // for it until the release of its pause is confirmed: LB/RB switch pages
+    // and no press made then reaches the game, also when the view closes with
+    // the button still held.
     if(s.profile&&s.profile->pageNavigation){
-        const bool reserving=s.map||s.choosing||s.awaiting!=0;
-        const auto pages=s.pages.update(raw.buttons,raw.connected,reserving);
+        const bool reserving=s.map||s.choosing||s.awaiting!=0||(s.action==InputAction::ToggleMap&&s.mapReady);
+        const auto pages=s.pages.update(raw.buttons,raw.connected,reserving,ViewReservableButtons);
         if(pages.step&&s.map)s.pageSteps+=pages.step;
         forwarded=static_cast<std::uint16_t>(forwarded&~pages.consumedButtons);
     }

@@ -98,10 +98,10 @@ Not validated individually: extra modes, Boss Rush, endings, Haunted Castle
 Built with Zig 0.13.0 `-Release` into `out/`; nothing installed, no game run.
 Core 60 groups (the 50 of v0.1.1 plus profiles, Dawn detection on/off,
 per-title hashing, title gate, Dawn scene rules over every mode/sub-state/page,
-dispatch, LB/RB reservation over every button combination, the Dawn view
-input sequence, pointer remapping and pointer hiding), WARP with `--proxy` 19
+dispatch, LB/RB and view-owned press reservation over every button
+combination, the Dawn view input sequences, pointer remapping and hiding), WARP with `--proxy` 19
 (the real title platform fails closed for Portrait and Dawn in a non-game host),
-guard 1, Steam pad 10 (adds: LB/RB can be consumed through the real builder
+guard 1, Steam pad 10 (adds: presses can be withheld through the real builder
 but never injected), Python 19. Installer fixtures: see the session handoff
 (they refuse to run while any `game.exe` is open).
 

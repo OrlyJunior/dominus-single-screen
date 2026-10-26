@@ -1902,6 +1902,22 @@ void page_buttons_reserve_until_release_and_never_leak() {
         r = all.update(raw, true, buttons % 5 != 0);
         CHECK((r.consumedButtons & ~PageButtons) == 0 && (r.consumedButtons & ~raw) == 0);
     }
+    // The view owns every press but View (the recognizer's) when asked to.
+    PageButtonFilter owner;
+    owner.update(ButtonB, true, false, ViewReservableButtons);
+    r = owner.update(ButtonB | ButtonA | ButtonView | ButtonY, true, true, ViewReservableButtons);
+    CHECK(r.consumedButtons == (ButtonA | ButtonY) && r.step == 0);   // B was already held
+    r = owner.update(ButtonB | ButtonA | ButtonY, true, false, ViewReservableButtons);
+    CHECK(r.consumedButtons == (ButtonA | ButtonY));
+    r = owner.update(ButtonB | ButtonA, true, false, ViewReservableButtons);
+    CHECK(r.consumedButtons == ButtonA && owner.reserved() == ButtonA);
+    CHECK(owner.update(ButtonB, true, false, ViewReservableButtons).consumedButtons == 0 && owner.reserved() == 0);
+    PageButtonFilter every;
+    for (std::uint32_t buttons = 0; buttons <= 0xffff; ++buttons) {
+        const auto raw = static_cast<std::uint16_t>(buttons);
+        r = every.update(raw, true, buttons % 3 != 0, ViewReservableButtons);
+        CHECK((r.consumedButtons & ButtonView) == 0 && (r.consumedButtons & ~raw) == 0);
+    }
     CHECK(step_page(0, -1, 2) == 1 && step_page(1, 1, 2) == 0 && step_page(0, 0, 2) == 0);
     CHECK(step_page(1, 3, 2) == 0 && step_page(0, -5, 3) == 1 && step_page(4, 1, 0) == 4);
 }
@@ -1926,7 +1942,7 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
         if (!state.input) return buttons;
         sample.buttons = buttons;
         const auto result = recognizer.update(sample, {true, true, state.gameplay, 1});
-        const auto p = pages.update(buttons, true, reserving);
+        const auto p = pages.update(buttons, true, reserving, ViewReservableButtons);
         if (p.step && view) page = step_page(page, p.step, 2);
         if (result.action == InputAction::ToggleMap) {
             if (view) view = false;                                   // release queued
@@ -1944,9 +1960,10 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
     // View opens the enlarged view on the map.
     CHECK(step(ButtonView, ready) == 0);
     CHECK(step(0, ready) == 0 && view && page == 0);
-    // RB/LB switch pages; other buttons pass to the (paused) game unchanged.
+    // RB/LB switch pages; any other press made in the view is kept from the
+    // paused game too.
     CHECK(step(ButtonRightShoulder, ready) == 0 && page == 1);
-    CHECK(step(0x1000 | ButtonRightShoulder, ready) == 0x1000 && page == 1);
+    CHECK(step(ButtonA | ButtonRightShoulder, ready) == 0 && page == 1);
     CHECK(step(0, ready) == 0);
     CHECK(step(ButtonLeftShoulder, ready) == 0 && page == 0);
     // Close with LB still held: View consumed, LB consumed until released.
@@ -1957,6 +1974,21 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
     // Now LB/RB are gameplay buttons again.
     CHECK(step(ButtonLeftShoulder, ready) == ButtonLeftShoulder);
     CHECK(step(ButtonRightShoulder, ready) == ButtonRightShoulder);
+    step(0, ready);
+    // A, Start and the d-pad pressed in the view and still held when it
+    // closes reach the game only after a release; a direction already held
+    // when it opened passes throughout.
+    constexpr std::uint16_t Start = 0x0010, Right = 0x0008, Up = 0x0001;
+    CHECK(step(Right, ready) == Right);
+    CHECK(step(Right | ButtonView, ready) == Right);
+    CHECK(step(Right, ready) == Right && view);
+    CHECK(step(Right | ButtonA | Start | Up, ready) == Right);
+    CHECK(step(Right | ButtonA | Start | Up | ButtonView, ready) == Right);
+    CHECK(step(Right | ButtonA | Start | Up, ready) == Right && !view);
+    CHECK(step(Right | ButtonA | Start | Up, ready) == Right && !reserving);
+    CHECK(step(Right | ButtonA, ready) == Right);
+    CHECK(step(Right, ready) == Right);
+    CHECK(step(Right | ButtonA | Up, ready) == (Right | ButtonA | Up));
     step(0, ready);
     // Pause menu and an event page: View stays native Select, LB/RB untouched.
     for (const auto* scene : {&menu, &event}) {

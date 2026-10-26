@@ -51,7 +51,8 @@ struct AdaptationProfile {
     // so, and the collection's original layout everywhere else.
     bool singleScreenEverywhere = false;
     // LB/RB switch between the map and the other top-screen page inside the
-    // enlarged view.
+    // enlarged view, and every press made in the view (View aside) is kept
+    // from the game until released (PageButtonFilter, ViewReservableButtons).
     bool pageNavigation = false;
     // Native marker replay and its position identity validated for this title.
     bool markerReplay = false;
@@ -175,22 +176,25 @@ private:
     std::uint64_t pendingGestureEpoch_ = 0;
 };
 
-// LB/RB inside the enlarged view. While the view reserves them (opening,
-// shown, or closing under the mod's pause), a press that begins is a page
-// command and that button is consumed until it is released, even after the
-// view closed: the DS computes trigger = (previous ^ current) & current
-// (dra01 0x18001fb90), so a button still held when emulation resumes would
-// otherwise be a new press. A button already held when the view opened is
-// not a command and passes unchanged, so resuming sees no new edge for it.
-// LB steps back and RB forward; both starting on one sample cancel out.
-// Disconnection is no evidence of a release: reservations survive it.
+// Buttons inside the enlarged view. While the view reserves input (opening,
+// shown, or closing under the mod's pause), a press that begins on a
+// reservable button (LB/RB always) is consumed until it is released, even
+// after the view closed: the DS computes trigger = (previous ^ current) &
+// current (dra01 0x18001fb90), so a button still held when emulation resumes
+// would otherwise be a new press. A button already held when the view opened
+// passes unchanged, so resuming sees no new edge for it. LB steps back and RB
+// forward; both starting on one sample cancel out. Disconnection is no
+// evidence of a release: reservations survive it.
 struct PageInput {
     std::uint16_t consumedButtons = 0;
     int step = 0;
 };
+// Every button but View, which the gesture recognizer owns.
+inline constexpr std::uint16_t ViewReservableButtons = static_cast<std::uint16_t>(~ButtonView);
 class PageButtonFilter {
 public:
-    PageInput update(std::uint16_t buttons, bool connected, bool reserving) noexcept;
+    PageInput update(std::uint16_t buttons, bool connected, bool reserving,
+                     std::uint16_t reservable = PageButtons) noexcept;
     void reset() noexcept { *this = PageButtonFilter{}; }
     std::uint16_t reserved() const noexcept { return reserved_; }
 

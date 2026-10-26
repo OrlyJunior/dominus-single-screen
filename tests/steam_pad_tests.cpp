@@ -257,11 +257,13 @@ void inactive_title_gate_forwards_every_action_combination_unchanged() {
     input::set_filter(nullptr);
     CHECK(abiFaults == 0);
 }
-// The live filter of a page-navigation title (Dawn) consumes LB/RB pressed in
-// the enlarged view: the real builder's output loses exactly those bits, and
-// a filter can never add LB, RB or Y that the player is not pressing.
+// The live filter of a page-navigation title (Dawn) consumes LB/RB and other
+// presses made in the enlarged view: the real builder's output loses exactly
+// those bits, and a filter can never add a button the player is not pressing
+// (View aside, which only the recognizer replays).
 std::uint16_t consume_rb(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons & ~ButtonRightShoulder); }
-std::uint16_t try_inject(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons | PageButtons | ButtonY); }
+std::uint16_t consume_a(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons & ~0x1000); }
+std::uint16_t try_inject(const input::Snapshot& raw, bool) noexcept { return static_cast<std::uint16_t>(raw.buttons | ViewReservableButtons); }
 void page_buttons_can_be_consumed_but_never_injected() {
     CHECK(poll(bit(L1)).buttons == ButtonLeftShoulder && poll(bit(R1)).buttons == ButtonRightShoulder);
     input::set_filter(consume_rb);
@@ -269,6 +271,9 @@ void page_buttons_can_be_consumed_but_never_injected() {
     CHECK(poll(bit(R1)).buttons == 0);
     CHECK(poll(bit(R1) | bit(L1) | bit(A)).buttons == (ButtonLeftShoulder | 0x1000));
     CHECK(poll(bit(L2) | bit(R1)).leftTrigger == 0x1e);
+    // Any press the view owns (Dawn) can be withheld the same way.
+    input::set_filter(consume_a);
+    CHECK(poll(bit(A) | bit(B)).buttons == 0x2000);
     input::set_filter(try_inject);
     for (std::uint32_t buttons = 0; buttons < (1u << Count); buttons += 7) {
         input::set_filter(nullptr);
