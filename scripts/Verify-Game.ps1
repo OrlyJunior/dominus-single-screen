@@ -38,10 +38,111 @@ function Assert-DssNoReparse([string]$Path) {
     }
 }
 
-function Assert-DssNoGameProcess {
-    # Name-only enumeration does not inspect process memory, modules, handles or controls.
-    $active = @(Get-Process -Name 'game' -ErrorAction SilentlyContinue)
-    if ($active.Count -ne 0) { throw 'A game.exe process is active. Installation/removal is refused; close it yourself later.' }
+if (-not ('DssFileIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class DssFileIdentity {
+    [StructLayout(LayoutKind.Sequential)]
+    struct Info {
+        public uint Attributes; public long Created, Accessed, Written;
+        public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle file, out Info info);
+    // Volume serial and file index: equal for every path (hard link included) of one file.
+    public static string Of(string path) {
+        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+            Info info;
+            if (!GetFileInformationByHandle(stream.SafeFileHandle, out info)) return null;
+            return string.Format("{0:X8}-{1:X8}{2:X8}", info.Volume, info.IndexHigh, info.IndexLow);
+        }
+    }
+}
+'@
+}
+
+# Identity of an existing regular file reached without reparse points; $null otherwise.
+function Get-DssFileIdentity([string]$Path) {
+    try {
+        if (-not $Path) { return $null }
+        Assert-DssNoReparse $Path
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+        return [DssFileIdentity]::Of([IO.Path]::GetFullPath($Path))
+    } catch { return $null }
+}
+
+# Two independent reports of a process image must agree; anything else is unidentified.
+function Merge-DssProcessPath([string]$ProcessPath, [string]$CimPath) {
+    $paths = @(@($ProcessPath, $CimPath) | Where-Object { $_ } | ForEach-Object {
+        try { [IO.Path]::GetFullPath($_) } catch { '?' }
+    })
+    if ($paths.Count -eq 0 -or $paths -contains '?') { return $null }
+    if ($paths.Count -eq 2 -and $paths[0] -ine $paths[1]) { return $null }
+    return $paths[0]
+}
+
+# Every process named game.exe (Dominus and Advance Collection both use that name)
+# plus any process whose image is the target, with its image path and file identity.
+# Only process names and image paths are read: never memory, modules, handles or windows.
+function Get-DssGameProcessRecords([string]$TargetExe) {
+    $byId = @{}
+    foreach ($process in @(Get-Process -Name 'game' -ErrorAction SilentlyContinue)) {
+        $path = $null
+        try { $path = $process.Path } catch { $path = $null }
+        $byId[[int]$process.Id] = [pscustomobject]@{ Id = [int]$process.Id; ProcessPath = $path; CimPath = $null }
+    }
+    $cim = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    foreach ($entry in $cim) {
+        $id = [int]$entry.ProcessId
+        $image = [string]$entry.ExecutablePath
+        $named = [string]$entry.Name -ieq 'game.exe'
+        $target = $TargetExe -and $image -and ($image -ieq $TargetExe)
+        if (-not ($named -or $target -or $byId.ContainsKey($id))) { continue }
+        if (-not $byId.ContainsKey($id)) { $byId[$id] = [pscustomobject]@{ Id = $id; ProcessPath = $null; CimPath = $null } }
+        $byId[$id].CimPath = $image
+    }
+    foreach ($record in $byId.Values) {
+        $path = Merge-DssProcessPath $record.ProcessPath $record.CimPath
+        [pscustomobject]@{ Id = $record.Id; Path = $path; Identity = (Get-DssFileIdentity $path) }
+    }
+}
+
+# Pure decision: the reasons any record blocks installation/removal into GameRoot.
+# A process is allowed only when its image is known, readable, outside GameRoot
+# and provably a different file from GameRoot's game.exe.
+function Get-DssProcessBlockers([object[]]$Records, [string]$GameRoot, [string]$TargetIdentity) {
+    $reasons = [Collections.Generic.List[string]]::new()
+    foreach ($record in @($Records)) {
+        if (-not $record) { continue }
+        if (-not $GameRoot) { $reasons.Add("pid $($record.Id): game.exe is running"); continue }
+        $root = Get-DssFullPath $GameRoot
+        $target = Join-Path $root 'game.exe'
+        if (-not $record.Path) { $reasons.Add("pid $($record.Id): image path unavailable or inconsistent"); continue }
+        $path = Get-DssFullPath $record.Path
+        if ($path -ieq $target) { $reasons.Add("pid $($record.Id): this game is running"); continue }
+        if (Test-DssWithin $path $root) { $reasons.Add("pid $($record.Id): runs from this game directory"); continue }
+        if (-not $TargetIdentity -or -not $record.Identity) { $reasons.Add("pid $($record.Id): file identity unavailable"); continue }
+        if ($record.Identity -ceq $TargetIdentity) { $reasons.Add("pid $($record.Id): same file as this game.exe"); continue }
+    }
+    return $reasons.ToArray()
+}
+
+# Without GameRoot any game.exe blocks (the v0.1.1 rule). With it, another,
+# unambiguously identified installation (e.g. Castlevania Advance Collection)
+# may stay open; this game, or any process that cannot be identified, blocks.
+function Assert-DssNoGameProcess([string]$GameRoot) {
+    $target = if ($GameRoot) { Join-Path (Get-DssFullPath $GameRoot) 'game.exe' } else { $null }
+    try { $records = @(Get-DssGameProcessRecords $target) } catch {
+        throw 'Process enumeration failed. Installation/removal is refused; try again later.'
+    }
+    $identity = if ($target) { Get-DssFileIdentity $target } else { $null }
+    $blockers = @(Get-DssProcessBlockers $records $GameRoot $identity)
+    if ($blockers.Count -ne 0) {
+        throw ('A game.exe process is active (' + ($blockers -join '; ') + '). Installation/removal is refused; close it yourself later.')
+    }
 }
 
 function Get-DssHash([string]$Path) {
