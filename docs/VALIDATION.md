@@ -109,3 +109,9 @@ Castlevania Advance Collection was open, correctly identified and allowed).
 The Dawn profile is off by default; with it off the detector, gate and input
 paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). No in-game
 validation of Dawn exists yet; see the plan in DAWN-OF-SORROW.md.
+
+First in-game session of the experimental Dawn build (28/10/2026, c341626):
+identification, hooks and View+Y worked, but the single screen never appeared
+because the scene rule required the map/Status pair, which the opening of a new
+game does not show (see DAWN-OF-SORROW.md). Fixed in the next build; core then
+63 groups, other suites unchanged and passing. Dawn remains unvalidated in game.

@@ -637,9 +637,13 @@ struct SceneVerdict {
     // without AdaptationProfile::singleScreenEverywhere; elsewhere the
     // collection's original layout is shown.
     bool singleScreen = false;
-    // With mapReady, the panel the native page puts the map in: 0 upper,
-    // 1 lower; -1 when the title does not tell (Portrait uses pixels).
+    // With mapReady, the panel the enlarged view opens on: 0 upper, 1 lower;
+    // -1 when the title does not tell (Portrait uses pixels). With the
+    // map/Status pair it is the map's panel; otherwise the shown page's.
     int mapPanel = -1;
+    // With mapReady and mapPanel: how many pages the view offers (2 for the
+    // map/Status pair, LB/RB switching them; 1 for any other top screen).
+    unsigned viewPages = 0;
 };
 
 // Portrait's own state, read from dra02.dll FFEFA110...8744 (Ghidra 12.1.4;
@@ -673,14 +677,17 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 // 0x180965749. Pages 0 (map) and 1 (Status) are a pair: the shown page is
 // drawn on the first sub-screen bank and, unless the overlay flag
 // 0x18096574b is set, the other page on the second, so both stay live. Other
-// pages replace the pair (2 during some in-game events, 3 the pause menu, ...).
-// Game type 0x180964346 is 0 for the normal game; 1-5 are other modes.
+// pages replace the pair: 2 during some in-game events, 3 a decorative
+// "paper" screen (f_paper1/2) shown in the menus, the pause menu and, in the
+// first validation session (28/10/2026), throughout the opening gameplay of a
+// new game, where the overlay and the page lock also stayed set. Game type
+// 0x180964346 is 0 for the normal game; 1-5 are other modes.
 // Gameplay sub-states: 0/1 entering, 2 running, 3 room change, 4 an event's
 // own selection screen, 6 an area load with the game frozen (0x1808eb250 set,
 // 0x1800191f0), 5 and others unknown. Brightness fades run while the int32
 // frame count 0x1808f5c2c is nonzero; 0x1808f5c34 is the level (0 normal).
-// Event flags 0x180963ed4: 0x10000000 locks the page pair during a scripted
-// event (0x1801b68a0); 0x200001 blocks the game's own pause menu (Start).
+// Event flags 0x180963ed4: 0x10000000 disables native Select page switching
+// (0x180022010); 0x200001 blocks the game's own pause menu (Start).
 struct DawnStateFields {
     std::uint8_t mode = 0xff;
     std::uint8_t gameState = 0xff;
@@ -696,13 +703,23 @@ struct DawnStateFields {
 inline constexpr std::uint8_t DawnGameplayMode = 2, DawnRunningState = 2;
 inline constexpr std::uint32_t DawnPageLockFlag = 0x10000000u, DawnMenuBlockFlags = 0x00200001u;
 bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept;
-// No page decides alone. Single screen (and View as the map command) needs
-// normal-game gameplay in a known sub-state, the map/Status pair on the top
-// screen and no scripted page lock. The enlarged map additionally needs the
-// running sub-state, no page switch, no frozen game, no fade and the game's
-// own pause menu allowed. Everything else, unknown or unreadable included,
+// Single screen (and View as the view command) follows gameplay, not the top
+// screen: normal-game mode 2 in a known sub-state, whatever page it shows.
+// The enlarged view additionally needs the running sub-state, no page switch
+// in progress, no frozen game, no fade and the game's own pause menu allowed;
+// no page authorizes it alone. It opens on the map with LB/RB to Status when
+// the top screen holds the live map/Status pair (page 0 or 1, no overlay,
+// native switching allowed), and on the shown page alone otherwise, so the
+// top screen stays reachable. Everything else, unknown or unreadable included,
 // keeps the original layout and native Select.
 SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) noexcept;
+
+// What the compositor shows for a title whose identity, focus, native and
+// pause gates already passed: nothing while the mod is off; the enlarged view
+// while it is open; the main screen alone where the profile or the scene
+// allows it; the collection's original layout elsewhere.
+Presentation title_presentation(const AdaptationProfile& profile, const SceneVerdict& scene,
+                                bool enabled, bool viewOpen) noexcept;
 
 // The scene fields of whichever title was verified (the other part unused).
 struct TitleSceneFields {

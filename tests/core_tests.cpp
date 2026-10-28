@@ -1755,25 +1755,27 @@ DawnStateFields dawn_fields(std::uint8_t mode, std::uint8_t state = 2, std::uint
     return fields;
 }
 
-void dawn_scene_never_trusts_the_page_alone() {
+void dawn_scene_follows_gameplay_and_never_trusts_the_page_alone() {
     // Unreadable fields, or fields never read, are unknown.
     auto verdict = classify_dawn_scene(dawn_fields(2), false);
     CHECK(verdict.scene == GameScene::Unknown && !verdict.gameplay && !verdict.singleScreen && !verdict.mapReady);
     verdict = classify_dawn_scene(DawnStateFields{}, true);
     CHECK(verdict.scene == GameScene::Unknown && !verdict.singleScreen && verdict.mapPanel == -1);
-    // Normal-game gameplay with the map or Status page: single screen, map ready.
+    // Normal-game gameplay with the map or Status page: single screen, the
+    // view opens on the map with Status as its second page.
     verdict = classify_dawn_scene(dawn_fields(2, 2, 0, 0, 0), true);
     CHECK(verdict.scene == GameScene::Gameplay && verdict.gameplay && verdict.singleScreen && verdict.mapReady);
-    CHECK(verdict.mapPanel == 0);
+    CHECK(verdict.mapPanel == 0 && verdict.viewPages == 2);
     verdict = classify_dawn_scene(dawn_fields(2, 2, 0, 1, 1), true);
-    CHECK(verdict.mapReady && verdict.mapPanel == 1);
-    // Pages 0/1 in any other mode authorize nothing: pause menu, title, game
+    CHECK(verdict.mapReady && verdict.mapPanel == 1 && verdict.viewPages == 2);
+    // Pages in any other mode authorize nothing: pause menu, title, game
     // over, closing sequence, loading and every unknown mode.
     for (unsigned mode = 0; mode <= 0xff; ++mode) {
         if (mode == DawnGameplayMode) continue;
-        for (const std::uint8_t page : {0, 1}) {
+        for (const std::uint8_t page : {0, 1, 3}) {
             verdict = classify_dawn_scene(dawn_fields(static_cast<std::uint8_t>(mode), 2, 0, page, page), true);
             CHECK(!verdict.gameplay && !verdict.singleScreen && !verdict.mapReady && verdict.mapPanel == -1);
+            CHECK(verdict.viewPages == 0);
         }
     }
     CHECK(classify_dawn_scene(dawn_fields(0x0a), true).scene == GameScene::InGameMenu);
@@ -1788,42 +1790,49 @@ void dawn_scene_never_trusts_the_page_alone() {
         verdict = classify_dawn_scene(dawn_fields(2, 2, type, 0, 0), true);
         CHECK(verdict.scene == GameScene::ExtraMode && !verdict.singleScreen && !verdict.mapReady);
     }
-    // An event's own top-screen page, a switch towards it, the overlay or the
-    // scripted page lock: gameplay in the original layout, View native.
+    // Any other top screen in gameplay keeps the single screen; the view
+    // offers that page alone, from the upper panel.
     for (unsigned page = 2; page <= 0xff; ++page) {
         verdict = classify_dawn_scene(dawn_fields(2, 2, 0, static_cast<std::uint8_t>(page), static_cast<std::uint8_t>(page)), true);
-        CHECK(verdict.scene == GameScene::Gameplay && !verdict.gameplay && !verdict.singleScreen && !verdict.mapReady);
+        CHECK(verdict.scene == GameScene::Gameplay && verdict.gameplay && verdict.singleScreen && verdict.mapReady);
+        CHECK(verdict.mapPanel == 0 && verdict.viewPages == 1);
     }
-    CHECK(!classify_dawn_scene(dawn_fields(2, 2, 0, 0, 2), true).singleScreen);
-    CHECK(!classify_dawn_scene(dawn_fields(2, 2, 0, 2, 0), true).singleScreen);
     auto fields = dawn_fields(2, 2, 0, 1, 1);
     fields.pageOverlay = 1;
-    CHECK(!classify_dawn_scene(fields, true).singleScreen);
-    fields = dawn_fields(2);
+    verdict = classify_dawn_scene(fields, true);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0 && verdict.viewPages == 1);
+    fields = dawn_fields(2, 2, 0, 1, 1);
     fields.eventFlags = DawnPageLockFlag;
-    CHECK(!classify_dawn_scene(fields, true).singleScreen);
-    // Sub-states: entering, room change and area load keep single screen
-    // without a map; the event selection screen and unknown states do not.
-    for (unsigned state = 0; state <= 0xff; ++state) {
-        verdict = classify_dawn_scene(dawn_fields(2, static_cast<std::uint8_t>(state)), true);
-        const bool known = state <= 3 || state == 6;
-        CHECK(verdict.singleScreen == known && verdict.gameplay == known);
-        CHECK(verdict.mapReady == (state == DawnRunningState));
+    verdict = classify_dawn_scene(fields, true);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0 && verdict.viewPages == 1);
+    // A page switch in progress (towards any page): single screen, no view.
+    const std::uint8_t switches[][2] = {{0, 1}, {1, 0}, {0, 2}, {2, 0}, {3, 0}, {11, 10}};
+    for (const auto& pages : switches) {
+        verdict = classify_dawn_scene(dawn_fields(2, 2, 0, pages[0], pages[1]), true);
+        CHECK(verdict.singleScreen && !verdict.mapReady && verdict.mapPanel == -1 && verdict.viewPages == 0);
     }
-    // Running, but a page switch, the frozen game, a fade or a moment the game
-    // refuses its own pause menu: single screen, no map.
-    CHECK(classify_dawn_scene(dawn_fields(2, 2, 0, 0, 1), true).singleScreen);
-    CHECK(!classify_dawn_scene(dawn_fields(2, 2, 0, 0, 1), true).mapReady);
-    CHECK(!classify_dawn_scene(dawn_fields(2, 2, 0, 1, 0), true).mapReady);
+    // Sub-states: entering, room change and area load keep single screen
+    // without a view; the event selection screen and unknown states do not,
+    // whatever page the top screen shows.
+    for (unsigned state = 0; state <= 0xff; ++state) {
+        for (const std::uint8_t page : {0, 3}) {
+            verdict = classify_dawn_scene(dawn_fields(2, static_cast<std::uint8_t>(state), 0, page, page), true);
+            const bool known = state <= 3 || state == 6;
+            CHECK(verdict.singleScreen == known && verdict.gameplay == known);
+            CHECK(verdict.mapReady == (state == DawnRunningState));
+        }
+    }
+    // Running, but the frozen game, a fade or a moment the game refuses its
+    // own pause menu: single screen, no view.
     fields = dawn_fields(2);
     fields.frozen = 1;
     CHECK(classify_dawn_scene(fields, true).singleScreen && !classify_dawn_scene(fields, true).mapReady);
     fields = dawn_fields(2);
     fields.fadeFrames = 3;
-    CHECK(!classify_dawn_scene(fields, true).mapReady);
+    CHECK(classify_dawn_scene(fields, true).singleScreen && !classify_dawn_scene(fields, true).mapReady);
     fields = dawn_fields(2);
     fields.brightness = -0x10000;
-    CHECK(!classify_dawn_scene(fields, true).mapReady);
+    CHECK(classify_dawn_scene(fields, true).singleScreen && !classify_dawn_scene(fields, true).mapReady);
     for (const std::uint32_t flag : {0x1u, 0x200000u}) {
         fields = dawn_fields(2);
         fields.eventFlags = flag;
@@ -1832,8 +1841,195 @@ void dawn_scene_never_trusts_the_page_alone() {
     // Unrelated event bits change nothing.
     fields = dawn_fields(2);
     fields.eventFlags = 0x80 | 0x200 | 0x100000;
-    CHECK(classify_dawn_scene(fields, true).mapReady);
+    CHECK(classify_dawn_scene(fields, true).mapReady && classify_dawn_scene(fields, true).viewPages == 2);
     CHECK(same_dawn_fields(dawn_fields(2), dawn_fields(2)) && !same_dawn_fields(dawn_fields(2), fields));
+}
+
+DawnStateFields logged_dawn(std::uint8_t mode, std::uint8_t state, std::uint8_t page, std::uint8_t requested,
+                            std::uint8_t overlay, std::uint8_t frozen, std::uint32_t flags, std::int32_t fade,
+                            std::int32_t level) {
+    auto fields = dawn_fields(mode, state, 0, page, requested);
+    fields.pageOverlay = overlay;
+    fields.frozen = frozen;
+    fields.eventFlags = flags;
+    fields.fadeFrames = fade;
+    fields.brightness = level;
+    return fields;
+}
+
+// Scene fields logged in the first in-game session (28/10/2026, opening of a
+// new game). Build c341626 kept the original layout throughout because the top
+// screen never showed the map/Status pair; gameplay alone now decides.
+void dawn_first_session_fields_reach_single_screen_in_gameplay() {
+    const auto& dawn = *adaptation_profile(Title::DawnOfSorrow);
+    const auto shown = [&](const DawnStateFields& fields, bool enabled) {
+        return title_presentation(dawn, classify_dawn_scene(fields, true), enabled, false);
+    };
+    // Boot, title and start menus, loading: original layout even with the mod on.
+    const DawnStateFields menus[] = {
+        logged_dawn(0x14, 0, 11, 10, 0, 0, 0, 0, 0), logged_dawn(0x15, 0, 11, 10, 0, 0, 0, 0, 0),
+        logged_dawn(0x03, 0, 3, 3, 0, 0, 0, 0, -65536), logged_dawn(0x04, 0, 3, 3, 0, 0, 0, 30, -65536),
+        logged_dawn(0x09, 0, 3, 3, 0, 0, 0x8000000, 7, -57344), logged_dawn(0x00, 0, 3, 3, 0, 0, 0, 0, 0),
+        logged_dawn(0x01, 0, 3, 3, 0, 0, 0x51140081, 0, 0)};
+    for (const auto& fields : menus) {
+        const auto verdict = classify_dawn_scene(fields, true);
+        CHECK(!verdict.singleScreen && !verdict.gameplay && !verdict.mapReady);
+        CHECK(shown(fields, true) == Presentation::Original && shown(fields, false) == Presentation::Original);
+    }
+    // Gameplay with the decorative page 3 and the game's menu blocked: single
+    // screen with the mod on, no view yet.
+    const DawnStateFields opening[] = {
+        logged_dawn(2, 0, 3, 3, 0, 0, 0x51140081, 0, 0), logged_dawn(2, 1, 3, 3, 0, 0, 0x50040081, 0, 0),
+        logged_dawn(2, 2, 3, 3, 0, 0, 0x50040081, 0, 0), logged_dawn(2, 2, 3, 3, 0, 0, 0x50040081, 7, 28672)};
+    for (const auto& fields : opening) {
+        const auto verdict = classify_dawn_scene(fields, true);
+        CHECK(verdict.singleScreen && verdict.gameplay && !verdict.mapReady);
+        CHECK(shown(fields, true) == Presentation::Gameplay && shown(fields, false) == Presentation::Original);
+    }
+    // Menu allowed again: the view offers the shown page alone.
+    auto verdict = classify_dawn_scene(logged_dawn(2, 2, 3, 3, 0, 0, 0x50040000, 0, 0), true);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0 && verdict.viewPages == 1);
+    // The event that forces Status with its overlay: same, one page.
+    verdict = classify_dawn_scene(logged_dawn(2, 2, 1, 1, 1, 0, 0x50040000, 0, 0), true);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0 && verdict.viewPages == 1);
+    // Its frozen moments: single screen, no view.
+    verdict = classify_dawn_scene(logged_dawn(2, 2, 1, 1, 1, 1, 0x50040000, 0, 0), true);
+    CHECK(verdict.singleScreen && !verdict.mapReady);
+    // The pause menu opened from there: original layout.
+    const auto menu = logged_dawn(0x0a, 2, 1, 1, 1, 1, 0x58040000, 0, 0);
+    CHECK(classify_dawn_scene(menu, true).scene == GameScene::InGameMenu && shown(menu, true) == Presentation::Original);
+}
+
+void title_presentation_keeps_portrait_and_follows_dawn_scenes() {
+    const auto& portrait = *adaptation_profile(Title::PortraitOfRuin);
+    const auto& dawn = *adaptation_profile(Title::DawnOfSorrow);
+    const auto title = classify_portrait_scene(scene_fields(5, 0, 0, 6, 6), true);
+    const auto play = classify_portrait_scene(scene_fields(2, 2, 0, 0, 0), true);
+    // Portrait (v0.1.1): the main screen alone in every verified scene.
+    CHECK(title_presentation(portrait, title, true, false) == Presentation::Gameplay);
+    CHECK(title_presentation(portrait, play, true, false) == Presentation::Gameplay);
+    CHECK(title_presentation(portrait, play, true, true) == Presentation::Map);
+    CHECK(title_presentation(portrait, play, false, false) == Presentation::Original);
+    CHECK(title_presentation(portrait, play, false, true) == Presentation::Original);
+    // Dawn: gameplay only; the view and the mod switch as for Portrait.
+    const auto menu = classify_dawn_scene(dawn_fields(0x0a, 2, 0, 3, 3), true);
+    const auto field = classify_dawn_scene(dawn_fields(2, 2, 0, 3, 3), true);
+    CHECK(title_presentation(dawn, menu, true, false) == Presentation::Original);
+    CHECK(title_presentation(dawn, field, true, false) == Presentation::Gameplay);
+    CHECK(title_presentation(dawn, field, true, true) == Presentation::Map);
+    CHECK(title_presentation(dawn, field, false, false) == Presentation::Original);
+    CHECK(title_presentation(dawn, SceneVerdict{}, true, false) == Presentation::Original);
+}
+
+// Mirrors live_controller for Dawn over a whole session: the gate (input,
+// gameplay, view readiness), the recognizer (View, View+Y), the mod's switch,
+// the view and title_presentation.
+void dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay() {
+    TitleGate gate;
+    InputRecognizer recognizer;
+    TitleObservation dawn{};
+    dawn.title = Title::DawnOfSorrow;
+    dawn.reason = TitleReason::Verified;
+    dawn.fields = {FakeVtable, Dra01, DawnModuleIndex, 1};
+    const auto& profile = *adaptation_profile(Title::DawnOfSorrow);
+    bool enabled = false, view = false, refused = false;
+    InputSnapshot sample{};
+    Presentation presentation = Presentation::Original;
+    const auto step = [&](std::uint16_t buttons, const DawnStateFields& fields, bool collectionPause = false) {
+        const auto scene = classify_dawn_scene(fields, true);
+        // A pause the mod does not own (the collection's menu) keeps input original.
+        const auto state = gate.update({dawn, true, collectionPause || view, view, scene});
+        if (state.inputChanged) recognizer.reset();
+        refused = false;
+        std::uint16_t forwarded = buttons;
+        if (state.input) {
+            sample.buttons = buttons;
+            const auto result = recognizer.update(sample, {true, enabled, enabled && state.gameplay, 1});
+            forwarded = result.forwardedButtons;
+            if (result.action == InputAction::ToggleMod) {
+                enabled = !enabled;
+                view = false;
+            } else if (result.action == InputAction::ToggleMap) {
+                if (view) view = false;
+                else if (state.mapReady) view = true;
+                else refused = true;
+            }
+        }
+        presentation = state.identity ? title_presentation(profile, scene, enabled, view) : Presentation::Original;
+        return forwarded;
+    };
+    const auto collection = logged_dawn(0x14, 0, 11, 10, 0, 0, 0, 0, 0);
+    const auto startMenu = logged_dawn(0x04, 0, 3, 3, 0, 0, 0, 0, 0);
+    const auto loading = logged_dawn(0x01, 0, 3, 3, 0, 0, 0x51140081, 0, 0);
+    const auto opening = logged_dawn(2, 2, 3, 3, 0, 0, 0x50040081, 0, 0);
+    const auto field = logged_dawn(2, 2, 3, 3, 0, 0, 0x50040000, 0, 0);
+    const auto pair = logged_dawn(2, 2, 0, 0, 0, 0, 0, 0, 0);
+    const auto pauseMenu = logged_dawn(0x0a, 2, 3, 3, 0, 0, 0x58040000, 0, 0);
+    // The collection's own menu pauses the emulator: View+Y passes unchanged
+    // there and does not switch the mod (v0.1.1 isolation, kept).
+    step(0, collection, true);
+    step(0, collection, true);
+    CHECK(step(ButtonView, collection, true) == ButtonView);
+    CHECK(step(ButtonView | ButtonY, collection, true) == (ButtonView | ButtonY) && !enabled);
+    step(0, collection, true);
+    // Dawn's start menu: View+Y switches the mod on; the layout stays native.
+    step(0, startMenu);
+    CHECK(step(ButtonView, startMenu) == 0);
+    CHECK(step(ButtonView | ButtonY, startMenu) == 0 && enabled);
+    step(0, startMenu);
+    CHECK(presentation == Presentation::Original);
+    // View alone in a menu stays native Select (replayed on release), no view.
+    step(ButtonView, startMenu);
+    CHECK(step(0, startMenu) == ButtonView && !view && presentation == Presentation::Original);
+    // Entering gameplay with the mod already on: the single screen appears.
+    step(0, loading);
+    CHECK(presentation == Presentation::Original);
+    step(0, opening);
+    CHECK(presentation == Presentation::Gameplay);
+    // View while the game refuses its own menu: consumed, nothing opens, no Select.
+    CHECK(step(ButtonView, opening) == 0);
+    CHECK(step(0, opening) == 0 && refused && !view && presentation == Presentation::Gameplay);
+    // Menu allowed: View opens the shown top-screen page enlarged, View closes.
+    step(ButtonView, field);
+    step(0, field);
+    CHECK(view && presentation == Presentation::Map);
+    step(ButtonView, field);
+    step(0, field);
+    CHECK(!view && presentation == Presentation::Gameplay);
+    // With the map/Status pair: the same, on the map.
+    step(ButtonView, pair);
+    step(0, pair);
+    CHECK(view && presentation == Presentation::Map);
+    step(ButtonView, pair);
+    step(0, pair);
+    CHECK(!view);
+    // The pause menu and back: original layout there, single screen after.
+    step(0, pauseMenu);
+    CHECK(presentation == Presentation::Original);
+    step(ButtonView, pauseMenu);
+    CHECK(step(0, pauseMenu) == ButtonView && !view);
+    step(0, field);
+    CHECK(presentation == Presentation::Gameplay);
+    // View+Y in gameplay switches the mod off and on again.
+    step(ButtonView, field);
+    step(ButtonView | ButtonY, field);
+    step(0, field);
+    CHECK(!enabled && presentation == Presentation::Original);
+    // Off: View is native Select even in gameplay.
+    step(ButtonView, field);
+    CHECK(step(0, field) == ButtonView && !view);
+    step(ButtonView, field);
+    step(ButtonView | ButtonY, field);
+    step(0, field);
+    CHECK(enabled && presentation == Presentation::Gameplay);
+    // View+Y with the view open closes it with the mod.
+    step(ButtonView, field);
+    step(0, field);
+    CHECK(view);
+    step(ButtonView, field);
+    step(ButtonView | ButtonY, field);
+    step(0, field);
+    CHECK(!enabled && !view && presentation == Presentation::Original);
 }
 
 void scene_dispatch_follows_the_verified_title() {
@@ -1851,7 +2047,7 @@ void scene_dispatch_follows_the_verified_title() {
     CHECK(classify_scene(fields, true).scene == GameScene::InGameMenu);
     fields.title = Title::DawnOfSorrow;
     verdict = classify_scene(fields, true);
-    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0 && verdict.viewPages == 2);
     CHECK(!classify_scene(fields, false).singleScreen);
 }
 
@@ -1934,7 +2130,7 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
     dawn.reason = TitleReason::Verified;
     dawn.fields = {FakeVtable, Dra01, DawnModuleIndex, 1};
     bool view = false, reserving = false;
-    unsigned page = 0;
+    unsigned page = 0, viewPages = 0;
     InputSnapshot sample{};
     const auto step = [&](std::uint16_t buttons, const SceneVerdict& scene) {
         const auto state = gate.update({dawn, true, view, view, scene});
@@ -1943,10 +2139,10 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
         sample.buttons = buttons;
         const auto result = recognizer.update(sample, {true, true, state.gameplay, 1});
         const auto p = pages.update(buttons, true, reserving, ViewReservableButtons);
-        if (p.step && view) page = step_page(page, p.step, 2);
+        if (p.step && view) page = step_page(page, p.step, viewPages);
         if (result.action == InputAction::ToggleMap) {
             if (view) view = false;                                   // release queued
-            else if (state.mapReady) { view = reserving = true; page = 0; }
+            else if (state.mapReady) { view = reserving = true; page = 0; viewPages = scene.viewPages; }
         } else if (!view) {
             reserving = false;                                        // release confirmed
         }
@@ -1990,14 +2186,23 @@ void dawn_view_never_leaks_page_buttons_into_the_game() {
     CHECK(step(Right, ready) == Right);
     CHECK(step(Right | ButtonA | Up, ready) == (Right | ButtonA | Up));
     step(0, ready);
-    // Pause menu and an event page: View stays native Select, LB/RB untouched.
-    for (const auto* scene : {&menu, &event}) {
-        CHECK(step(ButtonView, *scene) == 0);
-        const auto replay = step(0, *scene);
-        CHECK(replay == ButtonView && !view);
-        CHECK(step(ButtonRightShoulder, *scene) == ButtonRightShoulder);
-        step(0, *scene);
-    }
+    // Pause menu: View stays native Select, LB/RB untouched.
+    CHECK(step(ButtonView, menu) == 0);
+    CHECK(step(0, menu) == ButtonView && !view);
+    CHECK(step(ButtonRightShoulder, menu) == ButtonRightShoulder);
+    step(0, menu);
+    // An event's own top-screen page: View opens it alone; LB/RB stay the
+    // view's (consumed) but have no other page to show.
+    CHECK(step(ButtonView, event) == 0);
+    CHECK(step(0, event) == 0 && view && page == 0 && viewPages == 1);
+    CHECK(step(ButtonRightShoulder, event) == 0 && page == 0);
+    CHECK(step(0, event) == 0);
+    CHECK(step(ButtonLeftShoulder, event) == 0 && page == 0);
+    step(0, event);
+    step(ButtonView, event);
+    step(0, event);
+    CHECK(!view);
+    step(0, event);
 }
 
 void presented_points_map_back_to_the_original_panel() {
@@ -2109,7 +2314,10 @@ int main() {
         {"title_detector_keeps_dawn_inert_unless_enabled", title_detector_keeps_dawn_inert_unless_enabled},
         {"title_detector_hashes_each_title_once_across_switches", title_detector_hashes_each_title_once_across_switches},
         {"title_gate_needs_fresh_confirmations_for_each_title", title_gate_needs_fresh_confirmations_for_each_title},
-        {"dawn_scene_never_trusts_the_page_alone", dawn_scene_never_trusts_the_page_alone},
+        {"dawn_scene_follows_gameplay_and_never_trusts_the_page_alone", dawn_scene_follows_gameplay_and_never_trusts_the_page_alone},
+        {"dawn_first_session_fields_reach_single_screen_in_gameplay", dawn_first_session_fields_reach_single_screen_in_gameplay},
+        {"title_presentation_keeps_portrait_and_follows_dawn_scenes", title_presentation_keeps_portrait_and_follows_dawn_scenes},
+        {"dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay", dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay},
         {"scene_dispatch_follows_the_verified_title", scene_dispatch_follows_the_verified_title},
         {"page_buttons_reserve_until_release_and_never_leak", page_buttons_reserve_until_release_and_never_leak},
         {"dawn_view_never_leaks_page_buttons_into_the_game", dawn_view_never_leaks_page_buttons_into_the_game},

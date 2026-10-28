@@ -38,7 +38,7 @@ struct State {
     // The panel holding the map while the enlarged view is open (0 upper,
     // 1 lower) and the page shown there (0 the map, 1 the other page).
     int mapPanel=0;
-    unsigned page=0;
+    unsigned page=0,viewPages=1;
     int pageSteps=0;
     PageButtonFilter pages;
     unsigned controller=UINT32_MAX;
@@ -209,9 +209,9 @@ void finish_choice(ULONGLONG now) noexcept {
 // The native page tells where the map is (Dawn): no pixels, no delay.
 void open_native_page(State& s) noexcept {
     const auto& layout=layout_of(s.profile);
-    s.mapPanel=s.scene.mapPanel;s.page=0;s.pageSteps=0;
+    s.mapPanel=s.scene.mapPanel;s.viewPages=s.scene.viewPages?s.scene.viewPages:1;s.page=0;s.pageSteps=0;
     s.mapRect=rect(s.mapPanel?layout.lowerPanel:layout.upperPanel);
-    char line[120]{};std::snprintf(line,sizeof(line),"live,map-panel,%s,reason=native-page",s.mapPanel?"lower":"upper");log(line);
+    char line[120]{};std::snprintf(line,sizeof(line),"live,map-panel,%s,reason=native-page,pages=%u",s.mapPanel?"lower":"upper",s.viewPages);log(line);
     if(!s.awaiting&&!s.token)queue(native::PauseCommandKind::Acquire);
 }
 }
@@ -320,7 +320,7 @@ gfx::Request frame(HWND window) noexcept {
         // LB/RB steps collected by the filter apply only to a shown view.
         if(s.pageSteps){
             if(s.map&&s.profile&&s.profile->pageNavigation){
-                const auto previous=s.page;s.page=step_page(s.page,s.pageSteps,2);
+                const auto previous=s.page;s.page=step_page(s.page,s.pageSteps,s.viewPages);
                 if(s.page!=previous)log(s.page?"live,view-page,status":"live,view-page,map");
             }
             s.pageSteps=0;
@@ -348,13 +348,14 @@ gfx::Request frame(HWND window) noexcept {
         // The original compositor still renders every screen; no game setting
         // changes. The marker follows only titles whose replay was validated.
         const auto& layout=*s.profile;
-        if(s.map){
+        const auto presentation=title_presentation(layout,s.scene,s.enabled,s.map);
+        if(presentation==Presentation::Map){
             s.markerTarget={layout.markerReplay,s.mapPanel};
             if(s.page==0)return {gfx::Mode::Map,s.mapRect,false};
             return {gfx::Mode::Map,rect(s.mapPanel?layout.upperPanel:layout.lowerPanel),false};
         }
-        // A title that needs its top screen now keeps the original layout.
-        if(!layout.singleScreenEverywhere&&!s.scene.singleScreen)return {};
+        // Outside the title's single-screen scenes: the original layout.
+        if(presentation!=Presentation::Gameplay)return {};
         s.markerTarget={layout.markerReplay,-1};
         s.pointerPolicy.remap=layout.touchRemap;
         return {gfx::Mode::Gameplay,rect(layout.gameplay),false};

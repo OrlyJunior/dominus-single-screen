@@ -1024,24 +1024,30 @@ SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) 
                 return verdict;
             }
             verdict.scene = GameScene::Gameplay;
-            // The map/Status pair, both pages live. An event's own top-screen
-            // page, the overlay, a scripted page lock or an unknown sub-state
-            // is shown in the original layout instead.
-            const bool pair = fields.page <= 1 && fields.requestedPage <= 1 && fields.pageOverlay == 0;
-            const bool knownState = fields.gameState <= 3 || fields.gameState == 6;
-            const bool single = pair && knownState && !(fields.eventFlags & DawnPageLockFlag);
+            // Gameplay decides the single screen, whatever the top screen
+            // shows (the opening of a new game keeps a decorative page there).
+            // An unknown sub-state or an event's own selection screen (4) is
+            // shown in the original layout instead.
+            const bool single = fields.gameState <= 3 || fields.gameState == 6;
             verdict.gameplay = single;
             verdict.singleScreen = single;
             // Entering, room changes, area loads, fades, a page switch in
             // progress or a moment the game would refuse its own pause menu:
-            // no map yet.
+            // no enlarged view yet.
             verdict.mapReady = single && fields.gameState == DawnRunningState &&
                                fields.page == fields.requestedPage && fields.frozen == 0 &&
                                fields.fadeFrames == 0 && fields.brightness == 0 &&
                                !(fields.eventFlags & DawnMenuBlockFlags);
-            // The shown page is on the first bank, the upper panel: page 0
-            // (map) puts the map there, page 1 (Status) in the lower one.
-            if (verdict.mapReady) verdict.mapPanel = fields.page;
+            if (!verdict.mapReady) return verdict;
+            // The map/Status pair, both pages live and switchable: the shown
+            // page is on the first bank (upper panel), so page 0 puts the map
+            // there and page 1 in the lower one. Any other top screen (an
+            // event's page, the overlay, a locked or decorative page) is
+            // offered alone, from the upper panel.
+            const bool pair = fields.page <= 1 && fields.pageOverlay == 0 &&
+                              !(fields.eventFlags & DawnPageLockFlag);
+            verdict.mapPanel = pair ? fields.page : 0;
+            verdict.viewPages = pair ? 2u : 1u;
             return verdict;
         }
         case 0x00: case 0x01:
@@ -1067,6 +1073,13 @@ SceneVerdict classify_scene(const TitleSceneFields& fields, bool available) noex
         case Title::DawnOfSorrow: return classify_dawn_scene(fields.dawn, available);
         default: return {};
     }
+}
+
+Presentation title_presentation(const AdaptationProfile& profile, const SceneVerdict& scene,
+                                bool enabled, bool viewOpen) noexcept {
+    if (!enabled) return Presentation::Original;
+    if (viewOpen) return Presentation::Map;
+    return profile.singleScreenEverywhere || scene.singleScreen ? Presentation::Gameplay : Presentation::Original;
 }
 
 MapCommand map_command(const MapCommandInput& input) noexcept {
