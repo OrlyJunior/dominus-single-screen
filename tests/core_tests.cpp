@@ -913,6 +913,73 @@ void marker_cycle_supports_sixteen_states_and_refuses_seventeenth() {
     CHECK(growing.imageCount() == 1 && !growing.plan(f.ms(tick)).valid);
 }
 
+// Dawn's marker (dra01 0x18004d590): the counter +0x5e wraps at 39, the
+// affine scale steps 16..1 with holds 2,2,3,2,3,... (16 states, 39 ticks),
+// a 16x16 sprite. Here every scale is distinct and opaque, so its return from
+// the smallest to the full size changes 255 pixels: above Portrait's limit,
+// within Dawn's. Every other limit is Portrait's.
+void dawn_marker_cycle_fits_its_sprite_and_keeps_portrait_limits() {
+    constexpr unsigned W = 32, H = 24;
+    constexpr std::array<unsigned, 16> holds{{2, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2}};
+    std::array<std::array<std::uint32_t, W * H>, 16> images{};
+    for (unsigned state = 0; state < images.size(); ++state) {
+        images[state].fill(0x102030);
+        const unsigned side = 16 - state, origin = 8 + state / 2;
+        for (unsigned y = 0; y < side; ++y)
+            for (unsigned x = 0; x < side; ++x) images[state][(4 + state / 2 + y) * W + origin + x] = 0xc0c0ff;
+    }
+    const auto at = [&](unsigned tick) {
+        tick %= 39;
+        for (unsigned state = 0; state < holds.size(); ++state) {
+            if (tick < holds[state]) return state;
+            tick -= holds[state];
+        }
+        return 0u;
+    };
+    const auto ms = [](unsigned tick) { return (static_cast<std::uint64_t>(tick) * 1000 + 30) / 60; };
+    const auto diff = diff_images(images[15].data(), images[0].data(), W, H);
+    CHECK(diff.changed == 255 && diff.right - diff.left == 16 && diff.bottom - diff.top == 16);
+    // Dawn: the first lap back at the full size closes on the 39-tick period.
+    MarkerCycleTracker dawn(W, H, marker_cycle_limits(Title::DawnOfSorrow));
+    for (unsigned tick = 0; tick <= 39; ++tick) dawn.observe(images[at(tick)].data(), ms(tick));
+    auto plan = dawn.plan(ms(39));
+    CHECK(plan.valid && plan.confidence == MarkerCycleConfidence::Complete);
+    CHECK(plan.count == 16 && plan.periodTicks == 39 && dawn.imageCount() == 16);
+    // Still complete two laps later, frozen at any phase.
+    for (unsigned tick = 40; tick <= 120; ++tick) dawn.observe(images[at(tick)].data(), ms(tick));
+    plan = dawn.plan(ms(120));
+    CHECK(plan.valid && plan.confidence == MarkerCycleConfidence::Complete && plan.periodTicks == 39);
+    // Portrait's limits refuse that return and never complete the cycle.
+    MarkerCycleTracker portrait(W, H, marker_cycle_limits(Title::PortraitOfRuin));
+    for (unsigned tick = 0; tick <= 160; ++tick) portrait.observe(images[at(tick)].data(), ms(tick));
+    CHECK(portrait.plan(ms(160)).confidence != MarkerCycleConfidence::Complete);
+    // A change wider than the sprite is still no marker, whatever the title.
+    auto wide = images[1];
+    for (unsigned x = 0; x < W; ++x) wide[22 * W + x] = 0xffffff;
+    MarkerCycleTracker refused(W, H, marker_cycle_limits(Title::DawnOfSorrow));
+    refused.observe(images[0].data(), ms(0));
+    refused.observe(images[0].data(), ms(1));
+    CHECK(refused.observe(wide.data(), ms(2)) == MarkerCycleTracker::Event::Reset);
+    // The limits themselves: Portrait unchanged, Dawn differs only there.
+    const MarkerCycleLimits defaults{};
+    const auto same = [](const MarkerCycleLimits& a, const MarkerCycleLimits& b, bool changed) {
+        return (a.maxChanged == b.maxChanged) != changed && a.maxTransitionBox == b.maxTransitionBox &&
+               a.maxUnionBox == b.maxUnionBox && a.maxSampleGapMs == b.maxSampleGapMs &&
+               a.minHoldTicks == b.minHoldTicks && a.maxHoldTicks == b.maxHoldTicks &&
+               a.nativePeriodTicks == b.nativePeriodTicks && a.minSingleLapStates == b.minSingleLapStates &&
+               a.maxSingleLapHoldTicks == b.maxSingleLapHoldTicks &&
+               a.minSingleLapChanged == b.minSingleLapChanged && a.minSingleLapUnionBox == b.minSingleLapUnionBox;
+    };
+    CHECK(same(marker_cycle_limits(Title::PortraitOfRuin), defaults, false));
+    CHECK(same(marker_cycle_limits(Title::DawnOfSorrow), defaults, true));
+    CHECK(marker_cycle_limits(Title::DawnOfSorrow).maxChanged == 256 && defaults.maxChanged == 192);
+    CHECK(defaults.nativePeriodTicks == 39 && defaults.maxTransitionBox == 16);
+    // Switching a tracker to another title's limits starts over.
+    const auto generation = dawn.generation();
+    dawn.set_limits(marker_cycle_limits(Title::PortraitOfRuin));
+    CHECK(dawn.imageCount() == 0 && dawn.generation() != generation && !dawn.plan(ms(121)).valid);
+}
+
 void marker_cycle_excludes_pause_without_changing_measured_holds() {
     NativeMarkerCycle f;
     MarkerCycleTracker t(f.W, f.H);
@@ -1642,7 +1709,7 @@ void adaptation_profiles_keep_portrait_v011_and_isolate_dawn() {
     const auto* dawn = adaptation_profile(Title::DawnOfSorrow);
     CHECK(dawn && dawn->title == Title::DawnOfSorrow);
     CHECK(dawn->mapPanel == MapPanelSource::NativePage && !dawn->singleScreenEverywhere);
-    CHECK(dawn->pageNavigation && !dawn->markerReplay && dawn->touchRemap);
+    CHECK(dawn->pageNavigation && dawn->markerReplay && dawn->touchRemap);
     // No adaptation: the mod stays inert there.
     CHECK(!adaptation_profile(Title::OrderOfEcclesia) && !adaptation_profile(Title::Unknown));
     // Static data never claims runtime validation.
@@ -2597,6 +2664,7 @@ int main() {
         {"portrait_gate_separates_identity_gameplay_and_map", portrait_gate_separates_identity_gameplay_and_map},
         {"view_follows_scene_without_duplicate_or_stray_commands", view_follows_scene_without_duplicate_or_stray_commands},
         {"adaptation_profiles_keep_portrait_v011_and_isolate_dawn", adaptation_profiles_keep_portrait_v011_and_isolate_dawn},
+        {"dawn_marker_cycle_fits_its_sprite_and_keeps_portrait_limits", dawn_marker_cycle_fits_its_sprite_and_keeps_portrait_limits},
         {"title_detector_keeps_dawn_inert_unless_enabled", title_detector_keeps_dawn_inert_unless_enabled},
         {"title_detector_hashes_each_title_once_across_switches", title_detector_hashes_each_title_once_across_switches},
         {"title_gate_needs_fresh_confirmations_for_each_title", title_gate_needs_fresh_confirmations_for_each_title},

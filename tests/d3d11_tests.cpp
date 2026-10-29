@@ -812,6 +812,18 @@ void marker_multistate_replay_test(Device& device,DXGI_FORMAT format) {
     unsigned missingIdentityPatches=0;
     run(120,0,[](unsigned long long){return 12u;},[&](const dominus::marker::Patch& patch){if(patch.texture)++missingIdentityPatches;});
     require(missingIdentityPatches==0&&logged("reason=position-identity-unavailable"),"production identity mode stays frozen when dra02 is absent");
+    // Dawn follows its own identity (dra01, absent here too) and limits.
+    require(!GetModuleHandleW(L"dra01.dll"),"synthetic host has no Dawn module");
+    markerLog.clear();unsigned dawnPatches=0;
+    for(const auto begin=qpc_ms();qpc_ms()-begin<120;){
+        const auto patch=dominus::marker::on_present(device.device.get(),device.context.get(),sources[12].get(),panels,0,true,{},dominus::Title::DawnOfSorrow);
+        if(patch.texture)++dawnPatches;
+        device.context->Flush();Sleep(4);
+    }
+    require(dawnPatches==0&&logged("marker,title=dawn,maxChanged=256")&&logged("reason=position-identity-unavailable"),"Dawn's identity mode stays frozen when dra01 is absent"+marker_plans());
+    markerLog.clear();
+    dominus::marker::on_present(device.device.get(),device.context.get(),sources[12].get(),panels,-1,true);
+    require(logged("marker,title=portrait,maxChanged=192")&&logged("reason=title-changed"),"returning to Portrait drops Dawn's captures and restores its limits");
     dominus::marker::configure({false,true},nullptr,marker_log);
 }
 

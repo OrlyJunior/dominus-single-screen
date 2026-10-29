@@ -359,6 +359,8 @@ public:
     Event observe(const std::uint32_t* image, std::uint64_t timeMs,
                   std::uint64_t identityEpoch = 0) noexcept;
     void reset() noexcept;
+    // Another title's marker: its limits, and a capture started afresh.
+    void set_limits(const MarkerCycleLimits& limits) noexcept { limits_ = limits; reset(); }
     void exclude_pause(std::uint64_t pausedSinceMs, std::uint64_t pausedMs) noexcept;
     unsigned latest() const noexcept { return latest_; }
     unsigned imageCount() const noexcept { return imageCount_; }
@@ -391,6 +393,13 @@ private:
 };
 MarkerCycleFrame marker_cycle_frame(const MarkerCyclePlan& plan, std::uint64_t nowMs) noexcept;
 MarkerCyclePlan plan_marker_cycle(const MarkerCycleTracker& tracker, std::uint64_t frozenAtMs) noexcept;
+// The limits for a title's marker. Portrait: the defaults, measured on its
+// marker. Dawn (dra01 0x18004d590) counts the same 39-frame cycle with the
+// same scale formula (16 affine steps), so the period and holds carry over;
+// its sprite is a semi-transparent 16x16 one in double-size mode whose
+// visible part never exceeds 16x16, so one transition may change all 256 of
+// its pixels (Portrait's never exceeded 87). Every other limit is Portrait's.
+MarkerCycleLimits marker_cycle_limits(Title title) noexcept;
 
 struct PauseState {
     bool available = false;

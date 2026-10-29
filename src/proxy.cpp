@@ -171,12 +171,13 @@ void follow_markers(IDXGISwapChain* chain,dominus::gfx::Request& request){
         device->GetImmediateContext(&context);
         if(context&&SUCCEEDED(chain->GetBuffer(0,__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))){
             dominus::gfx::SourceRect panels[2];dominus::live::panel_rects(panels[0],panels[1]);
-            // Only a title with validated replay is tracked (Portrait); the map
-            // panel stays the map's even while the view shows the other page.
+            // Only a title with established replay is tracked (Portrait; Dawn
+            // experimental); the map panel stays the map's even while the view
+            // shows the other page (the patch lands outside the shown panel).
             const auto target=dominus::live::marker_target();
             const bool tracking=target.tracking&&request.mode!=dominus::gfx::Mode::Original;
             const int mapPanel=tracking&&request.mode==dominus::gfx::Mode::Map?target.mapPanel:-1;
-            const auto patch=dominus::marker::on_present(device,context,texture,panels,mapPanel,tracking,dominus::live::pause_context());
+            const auto patch=dominus::marker::on_present(device,context,texture,panels,mapPanel,tracking,dominus::live::pause_context(),target.title);
             request.patch=patch.texture;request.patchLeft=patch.left;request.patchTop=patch.top;
         }
     }

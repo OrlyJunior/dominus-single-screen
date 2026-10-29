@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <d3d11.h>
+#include "dominus/core.hpp"
 #include "dominus/graphics.hpp"
 
 // Replays an observed native multi-state marker cycle during the collection
@@ -12,7 +13,7 @@ using Log = void (*)(const char*) noexcept;
 struct Settings {
     bool trace = false;   // log tracker events and plans, dump a few images
     bool replay = false;  // replay complete native cycles during the pause
-    bool nativeIdentity = false; // production Portrait: read-only position veto
+    bool nativeIdentity = false; // production: read-only position veto of the title
 };
 struct PauseContext {
     bool supplied = false;
@@ -30,9 +31,10 @@ bool active() noexcept;
 struct Patch { ID3D11Texture2D* texture = nullptr; unsigned left = 0, top = 0; };
 // Render thread, once per Present, before composition. mapPanel: index into
 // panels shown full screen under the mod's pause, or -1. tracking: the mod is
-// on. Disabling it invalidates all captures. The patch, if any, is valid until the
-// next call and goes into gfx::Request::patch.
+// on. Disabling it invalidates all captures, and so does another title (its
+// own position identity and marker_cycle_limits). The patch, if any, is valid
+// until the next call and goes into gfx::Request::patch.
 Patch on_present(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* backbuffer,
                  const gfx::SourceRect (&panels)[2], int mapPanel, bool tracking,
-                 const PauseContext& pause = {}) noexcept;
+                 const PauseContext& pause = {}, Title title = Title::PortraitOfRuin) noexcept;
 }

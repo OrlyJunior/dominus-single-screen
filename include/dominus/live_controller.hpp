@@ -12,10 +12,11 @@ gfx::Request frame(HWND window) noexcept;
 // the most recent frame() evaluation on the render thread.
 marker::PauseContext pause_context() noexcept;
 // What the native marker follows after the most recent frame(): tracking only
-// for a title whose replay was validated and a non-original presentation;
-// mapPanel is the panel holding the map under the mod's pause (0 upper,
-// 1 lower), also while the view shows the other page, else -1.
-struct MarkerTarget { bool tracking=false; int mapPanel=-1; };
+// for a title whose replay was established (title: the verified one) and a
+// non-original presentation; mapPanel is the panel holding the map under the
+// mod's pause (0 upper, 1 lower), also while the view shows the other page,
+// else -1.
+struct MarkerTarget { bool tracking=false; int mapPanel=-1; Title title=Title::Unknown; };
 MarkerTarget marker_target() noexcept;
 // Pointer handling for touch-remap titles (Dawn) after the most recent
 // frame(): remap while it returned single-screen gameplay, hide while the

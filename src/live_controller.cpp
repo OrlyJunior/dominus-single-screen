@@ -357,13 +357,13 @@ gfx::Request frame(HWND window) noexcept {
         const auto presentation=title_presentation(layout,s.scene,s.enabled,s.map,s.lastLayout);
         s.lastLayout=presentation;
         if(presentation==Presentation::Map){
-            s.markerTarget={layout.markerReplay,s.mapPanel};
+            s.markerTarget={layout.markerReplay,s.mapPanel,layout.title};
             if(s.page==0)return {gfx::Mode::Map,s.mapRect,false};
             return {gfx::Mode::Map,rect(s.mapPanel?layout.upperPanel:layout.lowerPanel),false};
         }
         // Outside the title's single-screen scenes: the original layout.
         if(presentation!=Presentation::Gameplay)return {};
-        s.markerTarget={layout.markerReplay,-1};
+        s.markerTarget={layout.markerReplay,-1,layout.title};
         s.pointerPolicy.remap=layout.touchRemap;
         return {gfx::Mode::Gameplay,rect(layout.gameplay),false};
     } catch(...) {return {};}

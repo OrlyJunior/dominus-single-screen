@@ -26,12 +26,13 @@ constexpr AdaptationProfile Adaptations[] = {
     {Title::PortraitOfRuin, CollectionGameplay, CollectionUpperPanel, CollectionLowerPanel,
      MapPanelSource::Pixels, true, false, true, false},
     // Experimental: same collection layout assumed (not yet observed in Dawn),
-    // map panel from the native page, LB/RB pages, marker frozen (no replay
-    // until its cycle and position identity are established for dra01), and
-    // pointer positions remapped: Dawn's gameplay screen is its touch screen
-    // (dra01 0x18006fef0 adds the camera to touch coordinates).
+    // map panel from the native page, LB/RB pages, the marker replayed like
+    // Portrait's (its 39-frame cycle and dra01 position identity established
+    // statically, marker_cycle_limits, marker_identity), and pointer positions
+    // remapped: Dawn's gameplay screen is its touch screen (dra01 0x18006fef0
+    // adds the camera to touch coordinates).
     {Title::DawnOfSorrow, CollectionGameplay, CollectionUpperPanel, CollectionLowerPanel,
-     MapPanelSource::NativePage, false, true, false, true},
+     MapPanelSource::NativePage, false, true, true, true},
 };
 
 bool same_runtime(const RuntimeSnapshot& a, const RuntimeSnapshot& b) noexcept {
@@ -500,6 +501,12 @@ MarkerCyclePlan MarkerCycleTracker::plan(std::uint64_t frozenAtMs) const noexcep
 
 MarkerCyclePlan plan_marker_cycle(const MarkerCycleTracker& tracker, std::uint64_t frozenAtMs) noexcept {
     return tracker.plan(frozenAtMs);
+}
+
+MarkerCycleLimits marker_cycle_limits(Title title) noexcept {
+    MarkerCycleLimits limits{};
+    if (title == Title::DawnOfSorrow) limits.maxChanged = 16 * 16;
+    return limits;
 }
 
 MarkerCycleFrame marker_cycle_frame(const MarkerCyclePlan& plan, std::uint64_t nowMs) noexcept {
