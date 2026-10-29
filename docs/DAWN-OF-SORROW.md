@@ -12,19 +12,24 @@ generically.
 
 - **Gameplay:** the main screen alone, 4:3 with point sampling and black bars.
   In Dawn the main screen is also the DS touch screen.
-- **View:** opens the enlarged top screen under the collection's native pause.
-  With the map/Status pair on the top screen it opens on the **map**, and **LB**
-  or **RB** switch to the **Status** page (with the enemy information); with any
-  other top screen (an event's page, the decorative page of the opening) it
-  shows that page alone. **View** closes and resumes.
+- **Menus:** the title screen, the title menu and the file/mode select (while
+  the top screen shows only its decorative page) and the pause menu opened with
+  Start show their main screen alone: their options are on the touch screen.
+  The start/load step between a menu and gameplay keeps the current layout, so
+  nothing flashes.
+- **View:** in gameplay with a live map it opens the enlarged map under the
+  collection's native pause, from whichever panel holds the map (it follows the
+  native page, not a fixed position), and **LB** or **RB** switch to the
+  **Status** page (with the enemy information); **View** closes and resumes.
+  Before the game gives the map, during an event's own top screen and in every
+  menu, View stays native Select and nothing opens.
 - **View + Y:** toggles the whole mod, as in Portrait, in Dawn's menus and in
-  gameplay. In the menus the layout stays native until gameplay starts; the
-  collection's own menu (which pauses the emulator) keeps its original input.
-- **Automatic original layout:** outside normal-game gameplay the collection's
-  own layout is shown: the pause menu, the title screen and start menus,
-  sequences, game over, the other game modes, an event's selection screen and
-  every unknown state. Controls are the original ones there (View is native
-  Select). The switch follows native game state, never pixels or timers.
+  gameplay. The collection's own menu (which pauses the emulator) keeps its
+  original input and layout.
+- **Automatic original layout:** boot screens, sequences, game over, the other
+  game modes, an event's selection screen and every unknown state keep the
+  collection's own layout and original controls (View is native Select). The
+  switch follows native game state, never pixels or timers.
 - **Touch:** the touch screen stays visible and enlarged. Mouse and PC
   touchscreen positions are moved from the enlarged image back to the original
   gameplay panel, so a touch lands where it is aimed; the black bars are no
@@ -104,16 +109,22 @@ generically.
 
 ## Rules (fail-closed)
 
-- **Single screen** needs: Dawn verified, mod on, mode 2, game type 0 and a
-  known sub-state (0-3, 6), whatever the top screen shows.
-- **Enlarged view (and its pause)** additionally needs: sub-state 2, shown ==
+- **Single screen** needs Dawn verified and the mod on, and then one of: mode 2,
+  game type 0 and a known sub-state (0-3, 6), whatever the top screen shows;
+  modes 3 (title screen), 4 (title menu) or 9 (file/mode select) with the top
+  screen on page 3, shown and requested; mode 0xa (pause menu) of the normal
+  game. Modes 0/1 (start/load) hold the layout already shown.
+- **View is the mod's command** only in that gameplay with a live map: shown
+  and requested page in {0, 1}, no overlay, native switching allowed. Elsewhere
+  it stays native Select.
+- **Enlarged map (and its pause)** additionally needs: sub-state 2, shown ==
   requested (no page switch in progress), game not frozen, no fade, brightness
   0, the game's own pause menu allowed, input not held by a foreign pause, and
-  the usual lease checks; no page authorizes it alone. Its pages: the
-  map/Status pair (map first) when the shown page is 0 or 1 without the overlay
-  and with native switching allowed; otherwise the shown page alone, from the
-  upper panel. Under the mod's pause the DS is frozen, so a valid view stays
-  valid; anything else closes through the lease checks (never a blind unpause).
+  the usual lease checks; no page authorizes it alone. The map's panel follows
+  the page: page 0 shows it on the first bank (upper panel), page 1 on the
+  second (lower panel); LB/RB switch to the other one. Under the mod's pause
+  the DS is frozen, so a valid view stays valid; anything else closes through
+  the lease checks (never a blind unpause).
 - Unreadable or inconsistent fields: unknown, original layout, native input.
 
 ## Touch and pointer (game.exe)
@@ -147,14 +158,29 @@ the overlay, and the rule required the map/Status pair. No composition was
 requested or rejected. The rule now follows gameplay; the logged fields are
 regression tests (core `dawn_first_session_fields_reach_single_screen_in_gameplay`).
 
+## Second in-game session (28/10/2026, build 414645a)
+
+Gameplay showed the single screen and the pointer remapping ran. Remaining
+issues, with their causes in that build: the title menus (modes 3, 4, 9, top
+screen on page 3) and the pause menu (mode 0xa) kept the original layout
+because only mode 2 allowed the single screen; and View would have opened the
+shown top-screen page alone where no map was live. Evidence from the same log:
+the map arrived on page 0 after an area load (sub-state 6), with the switching
+lock cleared, and the pause menu kept page 0 on the top screen; statically, the
+title menu (0x1800512a0) and the file select (0x1801e21c0) read the touch screen
+and the pause menu runs its sub-menus 1-8 there (0x180059390). The logged fields
+are regression tests (core `dawn_second_session_menus_and_map_fields`).
+
 ## Not established yet
 
 - The collection layout in Dawn (assumed identical to Portrait's: gameplay left,
   two panels right) and which bank goes to which panel.
 - Composition, touch remapping and the enlarged view in Dawn: never reached in
   the first session, still to validate.
-- Which collection panel shows a page other than 0/1 (assumed the upper one,
-  like the shown page of the pair).
+- Which collection panel shows each sub-screen bank in Dawn (assumed as in
+  Portrait: the first bank upper, the second lower); the map's panel follows it.
+- Whether any pause sub-menu needs the top screen (stats, descriptions): it is
+  hidden in the single screen; View+Y shows the collection layout.
 - The exact purpose of page 2, sub-states 4/5, and every flag bit used above
   beyond the checks documented here; validation logs print all of them
   (`live,scene,title=dawn,...`).

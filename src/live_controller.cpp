@@ -49,6 +49,8 @@ struct State {
     marker::PauseContext pauseContext{};
     MarkerTarget markerTarget{};
     PointerPolicy pointerPolicy{};
+    // The last presentation frame() returned, for scenes that hold the layout.
+    Presentation lastLayout=Presentation::Original;
     native::PauseCommandKind waitingKind=native::PauseCommandKind::Acquire;
     DWORD lastPoll=0;
     InputAction action=InputAction::None;
@@ -97,7 +99,7 @@ void log_scene(State& s,const char* what) noexcept {
     char line[260]{};
     if(s.sceneFields.title==Title::DawnOfSorrow){
         const auto& f=s.sceneFields.dawn;
-        std::snprintf(line,sizeof(line),"%s,title=dawn,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,overlay=%u,frozen=%u,flags=0x%x,fade=%d/%d,single=%u,gameplay=%u,mapReady=%u,mapPanel=%d",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(f.pageOverlay),unsigned(f.frozen),f.eventFlags,f.fadeFrames,f.brightness,unsigned(s.scene.singleScreen),unsigned(s.gameplay),unsigned(s.mapReady),s.scene.mapPanel);
+        std::snprintf(line,sizeof(line),"%s,title=dawn,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,overlay=%u,frozen=%u,flags=0x%x,fade=%d/%d,single=%u,hold=%u,gameplay=%u,mapReady=%u,mapPanel=%d",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(f.pageOverlay),unsigned(f.frozen),f.eventFlags,f.fadeFrames,f.brightness,unsigned(s.scene.singleScreen),unsigned(s.scene.holdLayout),unsigned(s.gameplay),unsigned(s.mapReady),s.scene.mapPanel);
     }else{
         const auto& f=s.sceneFields.portrait;
         std::snprintf(line,sizeof(line),"%s,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,gameplay=%u,mapReady=%u",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(s.gameplay),unsigned(s.mapReady));
@@ -107,7 +109,7 @@ void log_scene(State& s,const char* what) noexcept {
 void update_gate(State& s,const TitleObservation& title,const title::SceneSample& sample,const native::Status& st) noexcept {
     const auto scene=classify_scene(sample.fields,sample.available);
     const auto gate=s.gate.update({title,st.pauseKnown,st.paused,s.token!=0||s.awaiting!=0||st.stalePause,scene});
-    const bool sceneChanged=scene.scene!=s.scene.scene||scene.singleScreen!=s.scene.singleScreen||gate.gameplay!=s.gameplay||gate.mapReady!=s.mapReady||
+    const bool sceneChanged=scene.scene!=s.scene.scene||scene.singleScreen!=s.scene.singleScreen||scene.holdLayout!=s.scene.holdLayout||gate.gameplay!=s.gameplay||gate.mapReady!=s.mapReady||
                             sample.available!=s.sceneAvailable||scene_key_changed(sample.fields,s.sceneFields);
     s.scene=scene;s.sceneFields=sample.fields;s.sceneAvailable=sample.available;s.gameplay=gate.gameplay;s.mapReady=gate.mapReady;
     if(sceneChanged&&gate.identity)log_scene(s,"live,scene");
@@ -344,11 +346,12 @@ gfx::Request frame(HWND window) noexcept {
         s.pauseContext.connectionEpoch=s.connection;
         // The pointer stays hidden from the paused game while the view holds input.
         if(s.identityActive&&s.profile->touchRemap)s.pointerPolicy.hide=s.map||s.choosing||s.awaiting!=0;
-        if(!s.identityActive||!s.enabled||!s.focused||!s.nativeReady||(st.paused&&!s.token))return {};
+        if(!s.identityActive||!s.enabled||!s.focused||!s.nativeReady||(st.paused&&!s.token)){s.lastLayout=Presentation::Original;return {};}
         // The original compositor still renders every screen; no game setting
         // changes. The marker follows only titles whose replay was validated.
         const auto& layout=*s.profile;
-        const auto presentation=title_presentation(layout,s.scene,s.enabled,s.map);
+        const auto presentation=title_presentation(layout,s.scene,s.enabled,s.map,s.lastLayout);
+        s.lastLayout=presentation;
         if(presentation==Presentation::Map){
             s.markerTarget={layout.markerReplay,s.mapPanel};
             if(s.page==0)return {gfx::Mode::Map,s.mapRect,false};

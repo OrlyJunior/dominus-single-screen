@@ -1029,35 +1029,43 @@ SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) 
             // An unknown sub-state or an event's own selection screen (4) is
             // shown in the original layout instead.
             const bool single = fields.gameState <= 3 || fields.gameState == 6;
-            verdict.gameplay = single;
             verdict.singleScreen = single;
+            // The map is live in a panel only while the top screen holds the
+            // map/Status pair; until the game gives the map (decorative page,
+            // overlay, locked switching) or during an event's own page there
+            // is nothing to enlarge, and View stays native Select.
+            const bool mapLive = fields.page <= 1 && fields.requestedPage <= 1 &&
+                                 fields.pageOverlay == 0 && !(fields.eventFlags & DawnPageLockFlag);
+            verdict.gameplay = single && mapLive;
             // Entering, room changes, area loads, fades, a page switch in
             // progress or a moment the game would refuse its own pause menu:
-            // no enlarged view yet.
-            verdict.mapReady = single && fields.gameState == DawnRunningState &&
+            // no enlarged map yet (View consumed, nothing opens).
+            verdict.mapReady = verdict.gameplay && fields.gameState == DawnRunningState &&
                                fields.page == fields.requestedPage && fields.frozen == 0 &&
                                fields.fadeFrames == 0 && fields.brightness == 0 &&
                                !(fields.eventFlags & DawnMenuBlockFlags);
             if (!verdict.mapReady) return verdict;
-            // The map/Status pair, both pages live and switchable: the shown
-            // page is on the first bank (upper panel), so page 0 puts the map
-            // there and page 1 in the lower one. Any other top screen (an
-            // event's page, the overlay, a locked or decorative page) is
-            // offered alone, from the upper panel.
-            const bool pair = fields.page <= 1 && fields.pageOverlay == 0 &&
-                              !(fields.eventFlags & DawnPageLockFlag);
-            verdict.mapPanel = pair ? fields.page : 0;
-            verdict.viewPages = pair ? 2u : 1u;
+            // The shown page is on the first bank (upper panel) and the other
+            // one on the second: page 0 puts the map upper, page 1 lower.
+            verdict.mapPanel = fields.page;
+            verdict.viewPages = 2;
             return verdict;
         }
         case 0x00: case 0x01:
+            // Start/load: a few frames between a menu and gameplay.
             verdict.scene = GameScene::Loading;
+            verdict.holdLayout = true;
             return verdict;
-        case 0x03:
-            verdict.scene = GameScene::Title;
+        case 0x03: case 0x04: case 0x09:
+            // Title screen, title menu, file/mode select: their options are on
+            // the main (touch) screen while the top screen is only page 3.
+            verdict.scene = fields.mode == 0x03 ? GameScene::Title : GameScene::StartMenu;
+            verdict.singleScreen = fields.page == 3 && fields.requestedPage == 3;
             return verdict;
         case 0x0a:
+            // The pause menu runs on the main screen; View stays native there.
             verdict.scene = GameScene::InGameMenu;
+            verdict.singleScreen = fields.gameType == 0;
             return verdict;
         case 0x05: case 0x16:
             verdict.scene = GameScene::Sequence;
@@ -1076,10 +1084,12 @@ SceneVerdict classify_scene(const TitleSceneFields& fields, bool available) noex
 }
 
 Presentation title_presentation(const AdaptationProfile& profile, const SceneVerdict& scene,
-                                bool enabled, bool viewOpen) noexcept {
+                                bool enabled, bool viewOpen, Presentation previous) noexcept {
     if (!enabled) return Presentation::Original;
     if (viewOpen) return Presentation::Map;
-    return profile.singleScreenEverywhere || scene.singleScreen ? Presentation::Gameplay : Presentation::Original;
+    if (profile.singleScreenEverywhere || scene.singleScreen) return Presentation::Gameplay;
+    // A transition keeps the single screen it started from, never more.
+    return scene.holdLayout && previous != Presentation::Original ? Presentation::Gameplay : Presentation::Original;
 }
 
 MapCommand map_command(const MapCommandInput& input) noexcept {

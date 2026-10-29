@@ -115,3 +115,10 @@ identification, hooks and View+Y worked, but the single screen never appeared
 because the scene rule required the map/Status pair, which the opening of a new
 game does not show (see DAWN-OF-SORROW.md). Fixed in the next build; core then
 63 groups, other suites unchanged and passing. Dawn remains unvalidated in game.
+
+Second session (414645a): single screen and pointer remapping worked in
+gameplay; the title menus and the pause menu still showed both screens. The
+next change (menus in single screen, View only with a live map, start/load
+hold) passed core 64 groups in an isolated light build (core and the live
+controller only); the full suites and the DLL wait for a machine without the
+game running.

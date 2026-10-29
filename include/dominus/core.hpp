@@ -637,13 +637,15 @@ struct SceneVerdict {
     // without AdaptationProfile::singleScreenEverywhere; elsewhere the
     // collection's original layout is shown.
     bool singleScreen = false;
-    // With mapReady, the panel the enlarged view opens on: 0 upper, 1 lower;
-    // -1 when the title does not tell (Portrait uses pixels). With the
-    // map/Status pair it is the map's panel; otherwise the shown page's.
+    // With mapReady, the panel that holds the map: 0 upper, 1 lower; -1 when
+    // the title does not tell (Portrait uses pixels).
     int mapPanel = -1;
     // With mapReady and mapPanel: how many pages the view offers (2 for the
-    // map/Status pair, LB/RB switching them; 1 for any other top screen).
+    // map/Status pair, LB/RB switching them).
     unsigned viewPages = 0;
+    // A short native transition (a start/load mode): keep whichever of the
+    // single screen or the original layout was shown, so no flash in between.
+    bool holdLayout = false;
 };
 
 // Portrait's own state, read from dra02.dll FFEFA110...8744 (Ghidra 12.1.4;
@@ -670,9 +672,14 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 // Dawn of Sorrow's own state, read from dra01.dll 52E20914...CD6E (Ghidra
 // 12.1.4; docs/DAWN-OF-SORROW.md). The GameThread loop 0x18000b700 calls
 // modes[0x18026c600][mode 0x1808eb248] each frame: 2 is gameplay (0x18002b1b0,
-// running while 0x180963ecc == 2; Start enters 0xa, the pause menu, which asks
-// the top screen for its own page 3), 3 the title screen, 5 game over, 0x16
-// the closing sequence, 0/1 game start/load. The top-screen manager
+// running while 0x180963ecc == 2; Start enters 0xa, the pause menu), 3 the
+// title screen, 4 the title menu and 9 the file/mode select (all three with
+// the decorative page 3 on the top screen; 4 reads the touch screen itself,
+// 9 through 0x1801e21c0), 5 game over, 0x16 the closing sequence, 0/1 game
+// start/load. The pause menu 0x180059390 runs its sub-menus (sub-state
+// 0x1808eb249 1-8, several reading the touch screen) on the main screen and
+// leaves the top-screen page alone; it asks for page 3 only when it exits to
+// something other than gameplay. The top-screen manager
 // 0x180022100 shows page 0x180965748 and switches to the requested
 // 0x180965749. Pages 0 (map) and 1 (Status) are a pair: the shown page is
 // drawn on the first sub-screen bank and, unless the overlay flag
@@ -703,23 +710,29 @@ struct DawnStateFields {
 inline constexpr std::uint8_t DawnGameplayMode = 2, DawnRunningState = 2;
 inline constexpr std::uint32_t DawnPageLockFlag = 0x10000000u, DawnMenuBlockFlags = 0x00200001u;
 bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept;
-// Single screen (and View as the view command) follows gameplay, not the top
-// screen: normal-game mode 2 in a known sub-state, whatever page it shows.
-// The enlarged view additionally needs the running sub-state, no page switch
-// in progress, no frozen game, no fade and the game's own pause menu allowed;
-// no page authorizes it alone. It opens on the map with LB/RB to Status when
-// the top screen holds the live map/Status pair (page 0 or 1, no overlay,
-// native switching allowed), and on the shown page alone otherwise, so the
-// top screen stays reachable. Everything else, unknown or unreadable included,
-// keeps the original layout and native Select.
+// Single screen (the main screen alone) in: normal-game mode 2 in a known
+// sub-state, whatever the top screen shows; the title screen, title menu and
+// file/mode select while the top screen shows only the decorative page 3; the
+// pause menu of the normal game. Start/load modes hold the current layout.
+// View is the mod's command only in gameplay with a live map: the top screen
+// holds the map/Status pair (page 0 or 1 shown and requested, no overlay,
+// native switching allowed); elsewhere, menus included, it stays native
+// Select. The enlarged map additionally needs the running sub-state, no page
+// switch in progress, no frozen game, no fade and the game's own pause menu
+// allowed; no page authorizes it alone. It opens on the panel that holds the
+// map (page 0: the shown page's panel; page 1: the other one), with LB/RB to
+// Status. Everything else (boot screens, sequences, game over, other modes,
+// unknown or unreadable states) keeps the original layout and native Select.
 SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) noexcept;
 
 // What the compositor shows for a title whose identity, focus, native and
 // pause gates already passed: nothing while the mod is off; the enlarged view
 // while it is open; the main screen alone where the profile or the scene
-// allows it; the collection's original layout elsewhere.
+// allows it, or where the scene holds a layout that was the single screen
+// (previous: the last presentation shown); the original layout elsewhere.
 Presentation title_presentation(const AdaptationProfile& profile, const SceneVerdict& scene,
-                                bool enabled, bool viewOpen) noexcept;
+                                bool enabled, bool viewOpen,
+                                Presentation previous = Presentation::Original) noexcept;
 
 // The scene fields of whichever title was verified (the other part unused).
 struct TitleSceneFields {
