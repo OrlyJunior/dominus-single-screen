@@ -107,8 +107,8 @@ but never injected), Python 19, installer fixtures 14 with RealGameTouched=false
 Castlevania Advance Collection was open, correctly identified and allowed).
 
 The Dawn profile is off by default; with it off the detector, gate and input
-paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). No in-game
-validation of Dawn exists yet; see the plan in DAWN-OF-SORROW.md.
+paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). In-game
+validation of Dawn is partial (below); see the plan in DAWN-OF-SORROW.md.
 
 First in-game session of the experimental Dawn build (28/10/2026, c341626):
 identification, hooks and View+Y worked, but the single screen never appeared
@@ -122,3 +122,13 @@ next change (menus in single screen, View only with a live map, start/load
 hold) passed core 64 groups in an isolated light build (core and the live
 controller only); the full suites and the DLL wait for a machine without the
 game running.
+
+Follow-ups of that session (29/10/2026, branch dev/dawn-menus-map-view, not
+tested in game): directions held or pressed while closing the view reach the
+game and residual fade levels no longer refuse it; the warp room's destination
+choice stays single screen; Dawn's map marker is replayed from its own frames.
+Full offline suites, no game running: core 68 groups (adds the logged warp room
+sequences and Dawn's marker cycle against both titles' limits), WARP with
+`--proxy` 19 (adds: Dawn's identity mode stays frozen without dra01, and a
+title change drops captures and restores the limits), guard 1, Steam pad 10,
+Python 19, installer fixtures 14 with RealGameTouched=false.
