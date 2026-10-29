@@ -704,20 +704,24 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 // 0x180965749. Pages 0 (map) and 1 (Status) are a pair: the shown page is
 // drawn on the first sub-screen bank and, unless the overlay flag
 // 0x18096574b is set, the other page on the second, so both stay live. Other
-// pages replace the pair: 2 during some in-game events, 3 a decorative
+// pages replace the pair: 2 the warp rooms' own screen (0x18006ccb0: a wall
+// with the localized picture of an area's name, 0x18006d440; native Select
+// never switches pages in a warp room, 0x180022010), 3 a decorative
 // "paper" screen (f_paper1/2) shown in the menus, the pause menu and, in the
 // first validation session (28/10/2026), throughout the opening gameplay of a
 // new game, where the overlay and the page lock also stayed set. Game type
 // 0x180964346 is 0 for the normal game; 1-5 are other modes.
-// Gameplay sub-states: 0/1 entering, 2 running, 3 room change, 4 an event's
-// own selection screen, 6 an area load with the game frozen (0x1808eb250 set,
-// 0x1800191f0), 5 and others unknown. Brightness fades run while the int32
-// frame count 0x1808f5c2c is nonzero; 0x1808f5c34 is the level (0 normal).
+// Gameplay sub-states (0x180963ecc, then its step): 0/1 entering, 2 running,
+// 3 room change, 4 step 1 the warp room's destination choice, 6 an area load
+// with the game frozen (0x1808eb250 set, 0x1800191f0), 5 and others unknown.
+// Brightness fades run while the int32 frame count 0x1808f5c2c is nonzero;
+// 0x1808f5c34 is the level (0 normal).
 // Event flags 0x180963ed4: 0x10000000 disables native Select page switching
 // (0x180022010); 0x200001 blocks the game's own pause menu (Start).
 struct DawnStateFields {
     std::uint8_t mode = 0xff;
     std::uint8_t gameState = 0xff;
+    std::uint8_t subState = 0xff;  // the step of gameState (0x180963ecd)
     std::uint8_t gameType = 0xff;
     std::uint8_t page = 0xff;
     std::uint8_t requestedPage = 0xff;
@@ -728,12 +732,21 @@ struct DawnStateFields {
     std::int32_t brightness = -1;
 };
 inline constexpr std::uint8_t DawnGameplayMode = 2, DawnRunningState = 2;
+// Only the warp room device 0x180077390 enters sub-state 4: Up at its centre
+// stores the word 0x104 (sub-state 4, step 1), freezes the game and sets event
+// flag 1. 0x180078500 then runs the choice on the main screen (the castle map
+// with a marker per destination and a cursor; d-pad, A/B, a tap on a marker)
+// while the top screen keeps page 2, now showing the highlighted destination's
+// area picture; it ends with the word 1. Step 0 (0x18002ad80) has no producer.
+inline constexpr std::uint8_t DawnWarpChoiceState = 4, DawnWarpChoiceStep = 1, DawnWarpRoomPage = 2;
 inline constexpr std::uint32_t DawnPageLockFlag = 0x10000000u, DawnMenuBlockFlags = 0x00200001u;
 bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept;
 // Single screen (the main screen alone) in: normal-game mode 2 in a known
-// sub-state, whatever the top screen shows; the title screen, title menu and
-// file/mode select while the top screen shows only the decorative page 3; the
-// pause menu of the normal game. Start/load modes hold the current layout.
+// sub-state, whatever the top screen shows, and in the warp room's destination
+// choice (sub-state 4 step 1 with page 2 shown and requested, no map to
+// enlarge); the title screen, title menu and file/mode select while the top
+// screen shows only the decorative page 3; the pause menu of the normal game.
+// Start/load modes hold the current layout.
 // View is the mod's command only in gameplay with a live map: the top screen
 // holds the map/Status pair (page 0 or 1 shown and requested, no overlay,
 // native switching allowed); elsewhere, menus included, it stays native

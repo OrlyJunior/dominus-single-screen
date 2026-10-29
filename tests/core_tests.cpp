@@ -1748,6 +1748,7 @@ DawnStateFields dawn_fields(std::uint8_t mode, std::uint8_t state = 2, std::uint
     fields.gameType = type;
     fields.page = page;
     fields.requestedPage = requested;
+    fields.subState = 0;
     fields.pageOverlay = 0;
     fields.frozen = 0;
     fields.eventFlags = 0;
@@ -1826,7 +1827,8 @@ void dawn_scene_follows_gameplay_and_never_trusts_the_page_alone() {
         CHECK(verdict.singleScreen && !verdict.gameplay && !verdict.mapReady && verdict.viewPages == 0);
     }
     // Sub-states: entering, room change and area load keep single screen
-    // without a map; the event selection screen and unknown states do not.
+    // without a map; unknown states and sub-state 4 outside the warp room's
+    // choice (here with the map page, step 0) do not.
     for (unsigned state = 0; state <= 0xff; ++state) {
         const bool known = state <= 3 || state == 6;
         verdict = classify_dawn_scene(dawn_fields(2, static_cast<std::uint8_t>(state), 0, 0, 0), true);
@@ -1960,6 +1962,93 @@ void dawn_second_session_menus_and_map_fields() {
     // Native Select moved to Status (mod off): the map is then the lower panel.
     verdict = classify_dawn_scene(logged_dawn(2, 2, 1, 1, 0, 0, 0x40000000, 0, 0), true);
     CHECK(verdict.mapReady && verdict.mapPanel == 1 && verdict.viewPages == 2);
+}
+
+// The warp room (third round, 29/10/2026): fields logged in the second session
+// around four destination choices, all shown in the original layout by builds
+// up to 0f29e7f. The step byte was not logged yet; the only writer of
+// sub-state 4 stores it with step 1 (0x180077390, the word 0x104).
+void dawn_warp_choice_stays_on_the_main_screen() {
+    const auto& dawn = *adaptation_profile(Title::DawnOfSorrow);
+    const auto warp = [](std::uint8_t state, std::uint8_t page, std::uint8_t requested, std::uint8_t frozen,
+                         std::uint32_t flags, std::int32_t fade, std::int32_t level, std::uint8_t step = 0) {
+        auto fields = logged_dawn(2, state, page, requested, 0, frozen, flags, fade, level);
+        fields.subState = step;
+        return fields;
+    };
+    const auto choice = warp(4, 2, 2, 1, 0x1000031, 0, 0, DawnWarpChoiceStep);
+    // Entering the warp room and standing in it: its own top page, single
+    // screen, no map to enlarge (View stays native Select, which the game
+    // ignores in warp rooms).
+    const DawnStateFields room[] = {
+        warp(3, 0, 2, 0, 0x100030, 0, 0), warp(0, 2, 2, 0, 0x100030, 0, 0, 1),
+        warp(1, 2, 2, 0, 0x30, 0, 0, 1), warp(2, 2, 2, 0, 0x30, 0, 0, 1),
+    };
+    for (const auto& fields : room) {
+        const auto verdict = classify_dawn_scene(fields, true);
+        CHECK(verdict.singleScreen && !verdict.gameplay && !verdict.mapReady && verdict.mapPanel == -1);
+    }
+    // The choice: the main screen alone too, whatever the layout before.
+    auto verdict = classify_dawn_scene(choice, true);
+    CHECK(verdict.scene == GameScene::Gameplay && verdict.singleScreen && !verdict.holdLayout);
+    CHECK(!verdict.gameplay && !verdict.mapReady && verdict.mapPanel == -1 && verdict.viewPages == 0);
+    for (const auto previous : {Presentation::Original, Presentation::Gameplay})
+        CHECK(title_presentation(dawn, verdict, true, false, previous) == Presentation::Gameplay);
+    CHECK(title_presentation(dawn, verdict, false, false, Presentation::Gameplay) == Presentation::Original);
+    // The event flag is set after the map is drawn and the freeze only in some
+    // pause states: neither is required, so no frame flashes the original.
+    for (const std::uint32_t flags : {0x0u, 0x1u, 0x1000000u, 0x1000031u}) {
+        for (const std::uint8_t frozen : {0, 1}) {
+            auto fields = choice;
+            fields.eventFlags = flags;
+            fields.frozen = frozen;
+            CHECK(classify_dawn_scene(fields, true).singleScreen);
+        }
+    }
+    // Leaving it: back in the room, or the warp itself (fades, the area load,
+    // arrival in the other warp room) until the next room change.
+    const DawnStateFields after[] = {
+        warp(1, 2, 2, 0, 0x1000031, 0, 0), warp(2, 2, 2, 0, 0x31, 0, 0), warp(2, 2, 2, 0, 0x30, 0, 0),
+        warp(2, 2, 2, 0, 0x31, 5, 54614), warp(2, 2, 2, 0, 0x31, 29, 2184), warp(2, 2, 2, 0, 0x31, 0, 65520),
+        warp(6, 2, 2, 1, 0x231, 0, 65536), warp(6, 2, 2, 1, 0x100230, 0, 65536), warp(0, 2, 2, 1, 0x100230, 0, 65536),
+        warp(1, 2, 2, 0, 0x30, 7, 57344), warp(2, 2, 2, 0, 0x30, 6, 49152), warp(2, 2, 2, 0, 0x30, 0, 0),
+        warp(3, 2, 2, 0, 0x100030, 0, 0),
+    };
+    for (const auto& fields : after) {
+        verdict = classify_dawn_scene(fields, true);
+        CHECK(verdict.singleScreen && !verdict.mapReady);
+        CHECK(title_presentation(dawn, verdict, true, false, Presentation::Gameplay) == Presentation::Gameplay);
+    }
+    // Anything else in sub-state 4 keeps the original layout: the step without
+    // a producer (0x18002ad80), any other step, another top page or a switch.
+    for (unsigned step = 0; step <= 0xff; ++step) {
+        auto fields = choice;
+        fields.subState = static_cast<std::uint8_t>(step);
+        CHECK(classify_dawn_scene(fields, true).singleScreen == (step == DawnWarpChoiceStep));
+    }
+    for (const auto& pages : {std::pair<int, int>{0, 0}, {1, 1}, {3, 3}, {0, 2}, {2, 0}, {2, 3}}) {
+        auto fields = choice;
+        fields.page = static_cast<std::uint8_t>(pages.first);
+        fields.requestedPage = static_cast<std::uint8_t>(pages.second);
+        verdict = classify_dawn_scene(fields, true);
+        CHECK(!verdict.singleScreen && !verdict.gameplay && !verdict.mapReady);
+        CHECK(title_presentation(dawn, verdict, true, false, Presentation::Gameplay) == Presentation::Original);
+    }
+    // No other sub-state takes the exception, and no other game type.
+    for (unsigned state = 0; state <= 0xff; ++state) {
+        auto fields = choice;
+        fields.gameState = static_cast<std::uint8_t>(state);
+        CHECK(classify_dawn_scene(fields, true).singleScreen == (state <= 3 || state == 4 || state == 6));
+    }
+    for (const std::uint8_t type : {1, 2, 3, 4, 5, 0xff}) {
+        auto fields = choice;
+        fields.gameType = type;
+        CHECK(!classify_dawn_scene(fields, true).singleScreen);
+    }
+    // The step is part of a stable sample.
+    auto other = choice;
+    other.subState = 0;
+    CHECK(same_dawn_fields(choice, choice) && !same_dawn_fields(choice, other));
 }
 
 void title_presentation_keeps_portrait_and_follows_dawn_scenes() {
@@ -2514,6 +2603,7 @@ int main() {
         {"dawn_scene_follows_gameplay_and_never_trusts_the_page_alone", dawn_scene_follows_gameplay_and_never_trusts_the_page_alone},
         {"dawn_first_session_fields_reach_single_screen_in_gameplay", dawn_first_session_fields_reach_single_screen_in_gameplay},
         {"dawn_second_session_menus_and_map_fields", dawn_second_session_menus_and_map_fields},
+        {"dawn_warp_choice_stays_on_the_main_screen", dawn_warp_choice_stays_on_the_main_screen},
         {"title_presentation_keeps_portrait_and_follows_dawn_scenes", title_presentation_keeps_portrait_and_follows_dawn_scenes},
         {"dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay", dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay},
         {"scene_dispatch_follows_the_verified_title", scene_dispatch_follows_the_verified_title},

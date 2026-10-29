@@ -22,6 +22,7 @@ constexpr std::uintptr_t ModeRva = 0x98c224, GameStateRva = 0x9b1e3c, GameTypeRv
 static_assert(sizeof(PortraitStateFields) == 5, "byte fields compared with memcmp");
 // dra01.dll RVAs of the scene fields documented with DawnStateFields. The
 // page bytes are 0x965748 shown, +1 requested and +3 the overlay flag; the
+// sub-state byte is followed by its step (one word, stored at once); the
 // fade is the int32 frame count at 0x8f5c2c and the level at +8.
 constexpr std::uintptr_t DawnModeRva = 0x8eb248, DawnFrozenRva = 0x8eb250, DawnGameStateRva = 0x963ecc,
                          DawnEventFlagsRva = 0x963ed4, DawnGameTypeRva = 0x964346, DawnPageRva = 0x965748,
@@ -262,15 +263,18 @@ DawnSceneSample dawn_scene(const TitleObservation& title) noexcept {
     const auto module = title.fields.module;
     if (title.title != Title::DawnOfSorrow || !module) return {};
     const auto read = [module](DawnStateFields& fields) noexcept {
+        std::array<std::uint8_t, 2> state{};  // sub-state, its step
         std::array<std::uint8_t, 4> pages{};
         std::array<std::int32_t, 3> fade{};  // frames, step, level
         if (!read_value(module + DawnModeRva, fields.mode) || !read_value(module + DawnFrozenRva, fields.frozen) ||
-            !read_value(module + DawnGameStateRva, fields.gameState) ||
+            !read_memory(module + DawnGameStateRva, state.data(), state.size()) ||
             !read_value(module + DawnEventFlagsRva, fields.eventFlags) ||
             !read_value(module + DawnGameTypeRva, fields.gameType) ||
             !read_memory(module + DawnPageRva, pages.data(), pages.size()) ||
             !read_memory(module + DawnFadeRva, fade.data(), sizeof(fade)))
             return false;
+        fields.gameState = state[0];
+        fields.subState = state[1];
         fields.page = pages[0];
         fields.requestedPage = pages[1];
         fields.pageOverlay = pages[3];

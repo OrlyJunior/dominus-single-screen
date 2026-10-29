@@ -1017,7 +1017,8 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 }
 
 bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept {
-    return a.mode == b.mode && a.gameState == b.gameState && a.gameType == b.gameType && a.page == b.page &&
+    return a.mode == b.mode && a.gameState == b.gameState && a.subState == b.subState &&
+           a.gameType == b.gameType && a.page == b.page &&
            a.requestedPage == b.requestedPage && a.pageOverlay == b.pageOverlay && a.frozen == b.frozen &&
            a.eventFlags == b.eventFlags && a.fadeFrames == b.fadeFrames && a.brightness == b.brightness;
 }
@@ -1035,9 +1036,15 @@ SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) 
             verdict.scene = GameScene::Gameplay;
             // Gameplay decides the single screen, whatever the top screen
             // shows (the opening of a new game keeps a decorative page there).
-            // An unknown sub-state or an event's own selection screen (4) is
-            // shown in the original layout instead.
-            const bool single = fields.gameState <= 3 || fields.gameState == 6;
+            // The warp room's destination choice is played on the main screen
+            // too (its map, d-pad, A/B, taps) while the top screen keeps the
+            // warp room's page; the event flag and the freeze are not required
+            // (the flag is set after the map is drawn). Any other sub-state is
+            // shown in the original layout.
+            const bool warpChoice = fields.gameState == DawnWarpChoiceState &&
+                                    fields.subState == DawnWarpChoiceStep &&
+                                    fields.page == DawnWarpRoomPage && fields.requestedPage == DawnWarpRoomPage;
+            const bool single = fields.gameState <= 3 || fields.gameState == 6 || warpChoice;
             verdict.singleScreen = single;
             // The map is live in a panel only while the top screen holds the
             // map/Status pair; until the game gives the map (decorative page,
