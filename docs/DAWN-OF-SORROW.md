@@ -48,16 +48,22 @@ generically.
   0x14002aef0), so nothing is triggered while the view is shown.
 - [FACT] dra01 detects presses as `trigger = (previous ^ current) & current`
   (0x18001fb90): a button still held when emulation resumes would be a new press.
-- Rule (`PageButtonFilter` with `ViewReservableButtons`): from the View release
-  that requests the view until the release of its pause is confirmed, the view
-  owns the controller. A LB/RB press that begins is a page command; that press,
-  and any other one that begins then (A, B, X, Y, Start, the d-pad, ...), is
-  consumed **until the button is released, also after the view closed**. A
-  button already held when the view opened passes unchanged, so resuming sees
-  no new edge for it. LB and RB pressed together cancel out. View stays the
-  recognizer's. The filter can only withhold presses: no button can be added
-  to the game's input except the recognizer's View replay (`input_observer`
-  forward()).
+- Rule (`ViewInputOwner`, `PageButtonFilter` with `ViewReservableButtons`):
+  the view owns the controller from the View release that requests it until
+  the View release (or View+Y) that closes it; not while its pause is being
+  released. A LB/RB press that begins in the view is a page command; that
+  press, and any other action that begins then (A, B, X, Y, Start, ...), is
+  consumed **until the button is released, also after the view closed**.
+  Directions are never withheld: they are held movement, so one held across
+  the close keeps moving, as after the game's own pause menu. A button already
+  held when the view opened passes unchanged, so resuming sees no new edge for
+  it. LB and RB pressed together cancel out. View stays the recognizer's. The
+  filter can only withhold presses: no button can be added to the game's input
+  except the recognizer's View replay (`input_observer` forward()).
+- [FACT, second session 28/10/2026] The first rule kept the view's ownership
+  until the release of its pause was confirmed (16-32 ms after the View
+  release) and withheld directions too, so a direction pressed while or right
+  after closing was ignored until pressed again (logged d-pad bits withheld).
 - Limit: analog sticks and triggers are never filtered; a stick held across the
   close acts as soon as the game resumes, as it would natively.
 
@@ -118,13 +124,16 @@ generically.
   and requested page in {0, 1}, no overlay, native switching allowed. Elsewhere
   it stays native Select.
 - **Enlarged map (and its pause)** additionally needs: sub-state 2, shown ==
-  requested (no page switch in progress), game not frozen, no fade, brightness
-  0, the game's own pause menu allowed, input not held by a foreign pause, and
-  the usual lease checks; no page authorizes it alone. The map's panel follows
-  the page: page 0 shows it on the first bank (upper panel), page 1 on the
-  second (lower panel); LB/RB switch to the other one. Under the mod's pause
-  the DS is frozen, so a valid view stays valid; anything else closes through
-  the lease checks (never a blind unpause).
+  requested (no page switch in progress), game not frozen, no fade, applied
+  brightness 0 (level / 4096), the game's own pause menu allowed, input not
+  held by a foreign pause, and the usual lease checks; no page authorizes it
+  alone. The map's panel follows the page: page 0 shows it on the first bank
+  (upper panel), page 1 on the second (lower panel); LB/RB switch to the other
+  one. Under the mod's pause the DS is frozen, so a valid view stays valid;
+  anything else closes through the lease checks (never a blind unpause).
+- [FACT, second session 28/10/2026] A fade can leave a residual level (logged
+  4, 8, 16) after its frames end; the hardware applies level / 4096, so such
+  levels show nothing and must not refuse the view.
 - Unreadable or inconsistent fields: unknown, original layout, native input.
 
 ## Touch and pointer (game.exe)
