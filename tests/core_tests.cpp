@@ -1946,6 +1946,17 @@ void dawn_second_session_menus_and_map_fields() {
     verdict = classify_dawn_scene(pause, true);
     CHECK(verdict.scene == GameScene::InGameMenu && verdict.singleScreen && !verdict.gameplay && !verdict.mapReady);
     CHECK(title_presentation(dawn, verdict, true, false, Presentation::Gameplay) == Presentation::Gameplay);
+    // A level left at +-8/+-16 after a fade is a normal screen (applied
+    // brightness level / 4096); two refusals of that session were these.
+    for (const int level : {8, -8, 16, -16, 4095, -4095}) {
+        verdict = classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x30, 0, level), true);
+        CHECK(verdict.mapReady && verdict.mapPanel == 0);
+    }
+    for (const int level : {4096, -4096, 65536, -65536}) {
+        CHECK(!classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x30, 0, level), true).mapReady);
+    }
+    // Bit 0x1 still refuses (the game's own menu is blocked there).
+    CHECK(!classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x31, 0, 0), true).mapReady);
     // Native Select moved to Status (mod off): the map is then the lower panel.
     verdict = classify_dawn_scene(logged_dawn(2, 2, 1, 1, 0, 0, 0x40000000, 0, 0), true);
     CHECK(verdict.mapReady && verdict.mapPanel == 1 && verdict.viewPages == 2);
@@ -2190,7 +2201,7 @@ void page_buttons_reserve_until_release_and_never_leak() {
     for (std::uint32_t buttons = 0; buttons <= 0xffff; ++buttons) {
         const auto raw = static_cast<std::uint16_t>(buttons);
         r = every.update(raw, true, buttons % 3 != 0, ViewReservableButtons);
-        CHECK((r.consumedButtons & ButtonView) == 0 && (r.consumedButtons & ~raw) == 0);
+        CHECK((r.consumedButtons & (ButtonView | DirectionButtons)) == 0 && (r.consumedButtons & ~raw) == 0);
     }
     CHECK(step_page(0, -1, 2) == 1 && step_page(1, 1, 2) == 0 && step_page(0, 0, 2) == 0);
     CHECK(step_page(1, 3, 2) == 0 && step_page(0, -5, 3) == 1 && step_page(4, 1, 0) == 4);
@@ -2199,82 +2210,196 @@ void page_buttons_reserve_until_release_and_never_leak() {
 // Mirrors live_controller for Dawn: the gate gives input and gameplay, the
 // recognizer View/Y, and the page filter LB/RB while the view reserves them
 // (from the ToggleMap that opens it until its close is confirmed).
-void dawn_view_never_leaks_page_buttons_into_the_game() {
+// Mirrors live_controller for Dawn, one controller sample then one frame per
+// step: the gate, the recognizer, ViewInputOwner and PageButtonFilter in the
+// filter; pause replies one frame after their request, then the pending View
+// command, in frame().
+struct DawnViewSession {
     TitleGate gate;
     InputRecognizer recognizer;
     PageButtonFilter pages;
+    ViewInputOwner owner;
     TitleObservation dawn{};
-    dawn.title = Title::DawnOfSorrow;
-    dawn.reason = TitleReason::Verified;
-    dawn.fields = {FakeVtable, Dra01, DawnModuleIndex, 1};
-    bool view = false, reserving = false;
-    unsigned page = 0, viewPages = 0;
     InputSnapshot sample{};
-    const auto step = [&](std::uint16_t buttons, const SceneVerdict& scene) {
-        const auto state = gate.update({dawn, true, view, view, scene});
+    bool shown = false, acquiring = false, releasing = false, reserving = false;
+    InputAction pending = InputAction::None;
+    unsigned page = 0, viewPages = 0;
+    DawnViewSession() {
+        dawn.title = Title::DawnOfSorrow;
+        dawn.reason = TitleReason::Verified;
+        dawn.fields = {FakeVtable, Dra01, DawnModuleIndex, 1};
+    }
+    std::uint16_t step(std::uint16_t buttons, const SceneVerdict& scene) {
+        const auto state = gate.update({dawn, true, shown, shown || acquiring || releasing, scene});
         if (state.inputChanged) recognizer.reset();
-        if (!state.input) return buttons;
-        sample.buttons = buttons;
-        const auto result = recognizer.update(sample, {true, true, state.gameplay, 1});
-        const auto p = pages.update(buttons, true, reserving, ViewReservableButtons);
-        if (p.step && view) page = step_page(page, p.step, viewPages);
-        if (result.action == InputAction::ToggleMap) {
-            if (view) view = false;                                   // release queued
-            else if (state.mapReady) { view = reserving = true; page = 0; viewPages = scene.viewPages; }
-        } else if (!view) {
-            reserving = false;                                        // release confirmed
+        std::uint16_t forwarded = buttons;
+        if (state.input) {
+            sample.buttons = buttons;
+            const auto result = recognizer.update(sample, {true, true, state.gameplay, 1});
+            if (result.action == InputAction::ToggleMod || pending == InputAction::None) pending = result.action;
+            const bool opening = acquiring || (pending == InputAction::ToggleMap && state.mapReady);
+            reserving = owner.update(shown, opening, result.action);
+            const auto p = pages.update(buttons, true, reserving, ViewReservableButtons);
+            if (p.step && shown) page = step_page(page, p.step, viewPages);
+            forwarded = static_cast<std::uint16_t>(result.forwardedButtons & ~p.consumedButtons);
         }
-        return static_cast<std::uint16_t>(result.forwardedButtons & ~p.consumedButtons);
-    };
+        // frame(): replies first, then the pending command.
+        if (acquiring) { acquiring = false; shown = true; page = 0; viewPages = scene.viewPages; }
+        else if (releasing) releasing = false;
+        if (pending == InputAction::ToggleMap && !acquiring && !releasing) {
+            if (shown) { shown = false; releasing = true; }
+            else if (state.mapReady) acquiring = true;
+        }
+        pending = InputAction::None;
+        return forwarded;
+    }
+};
+
+void dawn_view_never_leaks_page_buttons_into_the_game() {
+    DawnViewSession v;
     const auto ready = classify_dawn_scene(dawn_fields(2, 2, 0, 0, 0), true);
     const auto menu = classify_dawn_scene(dawn_fields(0x0a, 2, 0, 3, 3), true);
     const auto event = classify_dawn_scene(dawn_fields(2, 2, 0, 2, 2), true);
-    step(0, ready);
-    step(0, ready);
-    // View opens the enlarged view on the map.
-    CHECK(step(ButtonView, ready) == 0);
-    CHECK(step(0, ready) == 0 && view && page == 0);
-    // RB/LB switch pages; any other press made in the view is kept from the
+    v.step(0, ready);
+    v.step(0, ready);
+    // View opens the enlarged view on the map (its pause one frame later).
+    CHECK(v.step(ButtonView, ready) == 0);
+    CHECK(v.step(0, ready) == 0 && v.reserving && !v.shown);
+    CHECK(v.step(0, ready) == 0 && v.shown && v.page == 0);
+    // RB/LB switch pages; an action pressed in the view is kept from the
     // paused game too.
-    CHECK(step(ButtonRightShoulder, ready) == 0 && page == 1);
-    CHECK(step(ButtonA | ButtonRightShoulder, ready) == 0 && page == 1);
-    CHECK(step(0, ready) == 0);
-    CHECK(step(ButtonLeftShoulder, ready) == 0 && page == 0);
+    CHECK(v.step(ButtonRightShoulder, ready) == 0 && v.page == 1);
+    CHECK(v.step(ButtonA | ButtonRightShoulder, ready) == 0 && v.page == 1);
+    CHECK(v.step(0, ready) == 0);
+    CHECK(v.step(ButtonLeftShoulder, ready) == 0 && v.page == 0);
     // Close with LB still held: View consumed, LB consumed until released.
-    CHECK(step(ButtonLeftShoulder | ButtonView, ready) == 0);
-    CHECK(step(ButtonLeftShoulder, ready) == 0 && !view);
-    CHECK(step(ButtonLeftShoulder, ready) == 0 && !reserving);
-    CHECK(step(0, ready) == 0);
+    CHECK(v.step(ButtonLeftShoulder | ButtonView, ready) == 0);
+    CHECK(v.step(ButtonLeftShoulder, ready) == 0 && !v.shown && !v.reserving);
+    CHECK(v.step(ButtonLeftShoulder, ready) == 0);
+    CHECK(v.step(0, ready) == 0);
     // Now LB/RB are gameplay buttons again.
-    CHECK(step(ButtonLeftShoulder, ready) == ButtonLeftShoulder);
-    CHECK(step(ButtonRightShoulder, ready) == ButtonRightShoulder);
-    step(0, ready);
-    // A, Start and the d-pad pressed in the view and still held when it
-    // closes reach the game only after a release; a direction already held
-    // when it opened passes throughout.
+    CHECK(v.step(ButtonLeftShoulder, ready) == ButtonLeftShoulder);
+    CHECK(v.step(ButtonRightShoulder, ready) == ButtonRightShoulder);
+    v.step(0, ready);
+    // A and Start pressed in the view and held at close reach the game only
+    // after a release; directions pressed in the view are held movement and
+    // pass; a direction already held when it opened passes throughout.
     constexpr std::uint16_t Start = 0x0010, Right = 0x0008, Up = 0x0001;
-    CHECK(step(Right, ready) == Right);
-    CHECK(step(Right | ButtonView, ready) == Right);
-    CHECK(step(Right, ready) == Right && view);
-    CHECK(step(Right | ButtonA | Start | Up, ready) == Right);
-    CHECK(step(Right | ButtonA | Start | Up | ButtonView, ready) == Right);
-    CHECK(step(Right | ButtonA | Start | Up, ready) == Right && !view);
-    CHECK(step(Right | ButtonA | Start | Up, ready) == Right && !reserving);
-    CHECK(step(Right | ButtonA, ready) == Right);
-    CHECK(step(Right, ready) == Right);
-    CHECK(step(Right | ButtonA | Up, ready) == (Right | ButtonA | Up));
-    step(0, ready);
+    CHECK(v.step(Right, ready) == Right);
+    CHECK(v.step(Right | ButtonView, ready) == Right);
+    CHECK(v.step(Right, ready) == Right);
+    CHECK(v.step(Right, ready) == Right && v.shown);
+    CHECK(v.step(Right | ButtonA | Start | Up, ready) == (Right | Up));
+    CHECK(v.step(Right | ButtonA | Start | Up | ButtonView, ready) == (Right | Up));
+    CHECK(v.step(Right | ButtonA | Start | Up, ready) == (Right | Up) && !v.shown);
+    CHECK(v.step(Right | ButtonA | Start | Up, ready) == (Right | Up) && !v.reserving);
+    CHECK(v.step(Right | ButtonA, ready) == Right);
+    CHECK(v.step(Right, ready) == Right);
+    CHECK(v.step(Right | ButtonA | Up, ready) == (Right | ButtonA | Up));
+    v.step(0, ready);
     // Pause menu: View stays native Select, LB/RB untouched.
-    CHECK(step(ButtonView, menu) == 0);
-    CHECK(step(0, menu) == ButtonView && !view);
-    CHECK(step(ButtonRightShoulder, menu) == ButtonRightShoulder);
-    step(0, menu);
+    CHECK(v.step(ButtonView, menu) == 0);
+    CHECK(v.step(0, menu) == ButtonView && !v.shown);
+    CHECK(v.step(ButtonRightShoulder, menu) == ButtonRightShoulder);
+    v.step(0, menu);
     // An event's own top-screen page (no map): View stays native Select and
     // LB/RB are the game's.
-    CHECK(step(ButtonView, event) == 0);
-    CHECK(step(0, event) == ButtonView && !view);
-    CHECK(step(ButtonRightShoulder, event) == ButtonRightShoulder);
-    step(0, event);
+    CHECK(v.step(ButtonView, event) == 0);
+    CHECK(v.step(0, event) == ButtonView && !v.shown);
+    CHECK(v.step(ButtonRightShoulder, event) == ButtonRightShoulder);
+    v.step(0, event);
+}
+
+// Second session (28/10/2026): after closing the map with View, a direction
+// pressed right away was sometimes ignored until released and pressed again;
+// held from before opening it worked (logged: d-pad bits withheld by the
+// filter). The view now lets go of input at the close request.
+void directions_and_actions_after_closing_the_view_reach_the_game() {
+    const auto ready = classify_dawn_scene(dawn_fields(2, 2, 0, 0, 0), true);
+    constexpr std::uint16_t Right = 0x0008, Left = 0x0004;
+    const auto open = [&](DawnViewSession& v) {
+        v.step(ButtonView, ready);
+        v.step(0, ready);
+        v.step(0, ready);
+        CHECK(v.shown);
+    };
+    // A: held before opening, held through it: always the game's.
+    {
+        DawnViewSession v;
+        v.step(0, ready);
+        v.step(0, ready);
+        CHECK(v.step(Right, ready) == Right);
+        CHECK(v.step(Right | ButtonView, ready) == Right);
+        CHECK(v.step(Right, ready) == Right);
+        CHECK(v.step(Right, ready) == Right && v.shown);
+        CHECK(v.step(Right | ButtonView, ready) == Right);
+        CHECK(v.step(Right, ready) == Right && !v.shown);
+        CHECK(v.step(Right, ready) == Right && !v.releasing);
+    }
+    // B: pressed while its pause is being released, on the very sample View
+    // is let go, or while View is still held to close: the game's at once.
+    for (int when = 0; when < 3; ++when) {
+        DawnViewSession v;
+        v.step(0, ready);
+        v.step(0, ready);
+        open(v);
+        if (when == 0) {
+            CHECK(v.step(ButtonView, ready) == 0);
+            CHECK(v.step(0, ready) == 0 && !v.shown && v.releasing);
+            CHECK(v.step(Left, ready) == Left);
+        } else if (when == 1) {
+            CHECK(v.step(ButtonView, ready) == 0);
+            CHECK(v.step(Left, ready) == Left);
+        } else {
+            CHECK(v.step(ButtonView, ready) == 0);
+            CHECK(v.step(ButtonView | Left, ready) == Left);
+            CHECK(v.step(Left, ready) == Left);
+        }
+        for (int i = 0; i < 5; ++i) CHECK(v.step(Left, ready) == Left);
+        CHECK(v.pages.reserved() == 0);
+    }
+    // Actions: pressed in the view and held through the close, withheld until
+    // released; pressed after the close request, the game's at once.
+    {
+        DawnViewSession v;
+        v.step(0, ready);
+        v.step(0, ready);
+        open(v);
+        CHECK(v.step(ButtonA, ready) == 0);
+        CHECK(v.step(ButtonA | ButtonView, ready) == 0);
+        CHECK(v.step(ButtonA, ready) == 0 && !v.shown);
+        CHECK(v.step(ButtonA, ready) == 0);
+        CHECK(v.step(0, ready) == 0);
+        CHECK(v.step(ButtonA, ready) == ButtonA);
+        v.step(0, ready);
+        open(v);
+        v.step(ButtonView, ready);
+        CHECK(v.step(ButtonA, ready) == ButtonA);
+        CHECK(v.step(ButtonB | ButtonA, ready) == (ButtonB | ButtonA));
+        v.step(0, ready);
+        open(v);
+        v.step(ButtonView, ready);
+        v.step(0, ready);
+        CHECK(v.step(ButtonRightShoulder, ready) == ButtonRightShoulder);
+        CHECK(v.step(ButtonLeftShoulder | ButtonRightShoulder, ready) == PageButtons);
+    }
+}
+
+void view_input_owner_ends_at_the_close_request() {
+    ViewInputOwner owner;
+    CHECK(!owner.update(false, false, InputAction::None));
+    CHECK(owner.update(false, true, InputAction::ToggleMap));   // the opening request
+    CHECK(owner.update(false, true, InputAction::None));        // its pause in flight
+    CHECK(owner.update(true, false, InputAction::None));        // shown
+    CHECK(owner.update(true, true, InputAction::None));
+    CHECK(!owner.update(true, false, InputAction::ToggleMap));  // the close request
+    CHECK(!owner.update(true, false, InputAction::None));       // until frame() closes it
+    CHECK(!owner.update(false, false, InputAction::None));      // its pause being released
+    CHECK(owner.update(false, true, InputAction::ToggleMap));   // opened again
+    CHECK(owner.update(true, false, InputAction::None));
+    CHECK(!owner.update(true, false, InputAction::ToggleMod));  // View+Y closes too
+    owner.reset();
+    CHECK(owner.update(true, false, InputAction::None));
 }
 
 void presented_points_map_back_to_the_original_panel() {
@@ -2394,6 +2519,8 @@ int main() {
         {"scene_dispatch_follows_the_verified_title", scene_dispatch_follows_the_verified_title},
         {"page_buttons_reserve_until_release_and_never_leak", page_buttons_reserve_until_release_and_never_leak},
         {"dawn_view_never_leaks_page_buttons_into_the_game", dawn_view_never_leaks_page_buttons_into_the_game},
+        {"directions_and_actions_after_closing_the_view_reach_the_game", directions_and_actions_after_closing_the_view_reach_the_game},
+        {"view_input_owner_ends_at_the_close_request", view_input_owner_ends_at_the_close_request},
         {"presented_points_map_back_to_the_original_panel", presented_points_map_back_to_the_original_panel},
         {"pointer_is_hidden_in_the_view_and_until_release", pointer_is_hidden_in_the_view_and_until_release},
     };

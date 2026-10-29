@@ -41,6 +41,7 @@ struct State {
     unsigned page=0,viewPages=1;
     int pageSteps=0;
     PageButtonFilter pages;
+    ViewInputOwner viewInput;
     unsigned controller=UINT32_MAX;
     std::uint64_t connection=0,epoch=0,revision=0,token=0,leaseEpoch=0,leaseRevision=0;
     std::uint64_t request=0,awaiting=0,lastCommand=0;
@@ -124,7 +125,7 @@ void update_gate(State& s,const TitleObservation& title,const title::SceneSample
     if(!gate.identity)s.replayUntil=0;
     const auto* profile=gate.identity?adaptation_profile(gate.title):nullptr;
     // Page reservations survive a foreign pause (the input gate), not a title change.
-    if(gate.title!=s.title||!profile){s.pages.reset();s.page=0;s.pageSteps=0;}
+    if(gate.title!=s.title||!profile){s.pages.reset();s.viewInput.reset();s.page=0;s.pageSteps=0;}
     s.title=gate.title;s.profile=profile;
     s.identityActive=gate.identity&&profile;s.inputActive=gate.input&&profile;
 }
@@ -161,11 +162,14 @@ std::uint16_t filter(const input::Snapshot& raw,bool fromGame) noexcept {
     auto forwarded=result.forwardedButtons;
     if(s.replayUntil&&fromGame){if(now<s.replayUntil)forwarded|=ButtonView;else s.replayUntil=0;}
     // The enlarged view owns the controller from the View release that asks
-    // for it until the release of its pause is confirmed: LB/RB switch pages
-    // and no press made then reaches the game, also when the view closes with
-    // the button still held.
+    // for it until the View release (or View+Y) that closes it: LB/RB switch
+    // pages and no action pressed then reaches the game, also when the view
+    // closes with the button still held. Directions always pass, and presses
+    // made while its pause is being released are the game's.
     if(s.profile&&s.profile->pageNavigation){
-        const bool reserving=s.map||s.choosing||s.awaiting!=0||(s.action==InputAction::ToggleMap&&s.mapReady);
+        const bool opening=s.choosing||(s.awaiting!=0&&s.waitingKind==native::PauseCommandKind::Acquire)||
+                           (s.action==InputAction::ToggleMap&&s.mapReady);
+        const bool reserving=s.viewInput.update(s.map,opening,result.action);
         const auto pages=s.pages.update(raw.buttons,raw.connected,reserving,ViewReservableButtons);
         if(pages.step&&s.map)s.pageSteps+=pages.step;
         forwarded=static_cast<std::uint16_t>(forwarded&~pages.consumedButtons);

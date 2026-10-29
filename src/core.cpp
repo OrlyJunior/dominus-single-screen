@@ -654,6 +654,15 @@ PageInput PageButtonFilter::update(std::uint16_t buttons, bool connected, bool r
     return result;
 }
 
+bool ViewInputOwner::update(bool shown, bool opening, InputAction action) noexcept {
+    if (!shown) {
+        closing_ = false;
+        return opening;
+    }
+    if (action == InputAction::ToggleMap || action == InputAction::ToggleMod) closing_ = true;
+    return !closing_;
+}
+
 unsigned step_page(unsigned page, int step, unsigned count) noexcept {
     if (!count) return page;
     const long long n = count;
@@ -1039,10 +1048,12 @@ SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) 
             verdict.gameplay = single && mapLive;
             // Entering, room changes, area loads, fades, a page switch in
             // progress or a moment the game would refuse its own pause menu:
-            // no enlarged map yet (View consumed, nothing opens).
+            // no enlarged map yet (View consumed, nothing opens). The applied
+            // brightness is the level / 4096 (truncated, 0x18002b1b0): a level
+            // left at +-8 or +-16 after a fade is a normal screen.
             verdict.mapReady = verdict.gameplay && fields.gameState == DawnRunningState &&
                                fields.page == fields.requestedPage && fields.frozen == 0 &&
-                               fields.fadeFrames == 0 && fields.brightness == 0 &&
+                               fields.fadeFrames == 0 && fields.brightness / 0x1000 == 0 &&
                                !(fields.eventFlags & DawnMenuBlockFlags);
             if (!verdict.mapReady) return verdict;
             // The shown page is on the first bank (upper panel) and the other

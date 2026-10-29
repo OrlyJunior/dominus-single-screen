@@ -176,21 +176,41 @@ private:
     std::uint64_t pendingGestureEpoch_ = 0;
 };
 
-// Buttons inside the enlarged view. While the view reserves input (opening,
-// shown, or closing under the mod's pause), a press that begins on a
-// reservable button (LB/RB always) is consumed until it is released, even
-// after the view closed: the DS computes trigger = (previous ^ current) &
-// current (dra01 0x18001fb90), so a button still held when emulation resumes
-// would otherwise be a new press. A button already held when the view opened
-// passes unchanged, so resuming sees no new edge for it. LB steps back and RB
-// forward; both starting on one sample cancel out. Disconnection is no
-// evidence of a release: reservations survive it.
+// Buttons inside the enlarged view. While the view reserves input (see
+// ViewInputOwner), a press that begins on a reservable button (LB/RB always)
+// is consumed until it is released, even after the view closed: the DS
+// computes trigger = (previous ^ current) & current (dra01 0x18001fb90), so
+// an action button still held when emulation resumes would otherwise fire. A
+// button already held when the view opened passes unchanged, so resuming sees
+// no new edge for it. LB steps back and RB forward; both starting on one
+// sample cancel out. Disconnection is no evidence of a release: reservations
+// survive it.
 struct PageInput {
     std::uint16_t consumedButtons = 0;
     int step = 0;
 };
-// Every button but View, which the gesture recognizer owns.
-inline constexpr std::uint16_t ViewReservableButtons = static_cast<std::uint16_t>(~ButtonView);
+// The d-pad (XInput up/down/left/right at the Steam pad builder output).
+inline constexpr std::uint16_t DirectionButtons = 0x000F;
+// What the view keeps from the game: every press but View (the gesture
+// recognizer's) and the directions. A direction is held movement, so one held
+// across the close keeps moving, as after the game's own pause menu; holding
+// it back made Soma ignore a direction pressed while closing (second session).
+inline constexpr std::uint16_t ViewReservableButtons =
+    static_cast<std::uint16_t>(~(ButtonView | DirectionButtons));
+
+// Whether the enlarged view owns new presses: from the request that opens it
+// (opening: the View release that asks for it, its panel choice or its pause
+// request) while it is shown, until the request that closes it (the View
+// release or View+Y recognized on this sample). Never while its pause is being
+// released: a press made right after closing belongs to the game.
+class ViewInputOwner {
+public:
+    bool update(bool shown, bool opening, InputAction action) noexcept;
+    void reset() noexcept { closing_ = false; }
+
+private:
+    bool closing_ = false;
+};
 class PageButtonFilter {
 public:
     PageInput update(std::uint16_t buttons, bool connected, bool reserving,
