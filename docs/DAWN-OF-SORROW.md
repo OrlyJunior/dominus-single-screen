@@ -15,8 +15,9 @@ generically.
 - **Gameplay:** the main screen alone, 4:3 with point sampling and black bars.
   In Dawn the main screen is also the DS touch screen.
 - **Menus:** the title screen, the title menu and the file/mode select (while
-  the top screen shows only its decorative page) and the pause menu opened with
-  Start show their main screen alone: their options are on the touch screen.
+  the top screen shows only its decorative page), the pause menu opened with
+  Start and the two merchants' menus (the shop and the synthesis merchant, all
+  their sub-menus) show their main screen alone: their options are there.
   The start/load step between a menu and gameplay keeps the current layout, so
   nothing flashes.
 - **View:** in gameplay with a live map it opens the enlarged map under the
@@ -103,6 +104,7 @@ generically.
 | brightness fade: frames left 0x1808f5c2c, level 0x1808f5c34 (0 normal) | 0x18002b1b0 (default case) |
 | game type 0x180964346: 0 normal game, other values other modes | 0x18002bb20 |
 | mode 3 title screen, 5 game over, 0x16 closing sequence, 0/1 start/load | mode table entries |
+| mode 0xc the shop (backdrop `s_shpbgxx`), 0xd the synthesis merchant (`s_mixbgxx`, `f_mix_chara`); one frame for both: sub-state 0x1808eb249 0 opening (0x180065960), 1 options (0x180066000), 2-3 their two sub-menus (shop: 0x1800667f0 twice; synthesis: 0x180052510, 0x180053750) | 0x180065780, 0x180052480 |
 
 ## Top-screen pages
 
@@ -157,6 +159,36 @@ generically.
   Showing it would need a new layout (the top panel beside the main screen),
   not done.
 
+## Merchants' menus
+
+- [FACT] Talking to either merchant stores the mode word once, mode and its
+  sub-state together (0x1801f1ad4: 0xc for the shop, 0x1801f23c2: 0xd for the
+  synthesis merchant). The next frames turn the main layers off, black the main
+  screen and freeze the game; leaving stores sub-state 0, then mode 2, with a
+  fade-in. A sampler can only see a merchant mode or gameplay in between.
+- [FACT] Shop: sub-state 2 buys and 3 sells (0x1800667f0 with 0/1; gold and
+  counts change on confirm). Synthesis merchant: 2 synthesizes (0x180052510:
+  base item and soul, an animation, the result) and 3 releases up to three
+  souls (0x180053750).
+- [FACT] Everything is drawn on the main screen in every sub-state: portrait,
+  options, item lists, counts, quantities, prices, gold, descriptions, the stat
+  comparison of an equipment (numbers and arrows, 0x180060490/0x180060030), the
+  synthesis preview and result, the yes/no and quantity dialogs. The fades
+  darken only the main screen. No page is requested (no write to 0x180965749);
+  the top screen keeps the live map/Status pair, and native Select still
+  switches it. The comparison's trial equipment is restored before the top
+  screen is drawn, so the Status page never shows it.
+- [FACT] Touch: options, list rows, scrolling, quantity, yes/no and the back
+  box are main-screen rectangles; synthesis and release hit-test their
+  main-screen sprites. Every action also has its button path.
+- Rule: modes 0xc and 0xd of the normal game are single screen in every
+  sub-state, like the pause menu; touches are remapped; View stays native
+  Select; View+Y switches the mod. Other game types keep the original layout.
+- [INFERENCE] Nothing needed there is on the top screen; it shows the usual map
+  and Status (View+Y shows them in the collection layout).
+- [FACT] Mode 0x17, which shares a guard with these menus, is not a merchant:
+  a load-failure notice that requests its own top page; it stays original.
+
 ## Map marker
 
 - [FACT] dra01 draws the map marker in 0x18004d590, object 3 of the
@@ -192,8 +224,8 @@ generically.
   game type 0 and a known sub-state (0-3, 6), whatever the top screen shows, or
   the warp room's destination choice (above); modes 3 (title screen), 4 (title
   menu) or 9 (file/mode select) with the top screen on page 3, shown and
-  requested; mode 0xa (pause menu) of the normal game. Modes 0/1 (start/load)
-  hold the layout already shown.
+  requested; modes 0xa (pause menu), 0xc and 0xd (the merchants' menus) of the
+  normal game. Modes 0/1 (start/load) hold the layout already shown.
 - **View is the mod's command** only in that gameplay with a live map: shown
   and requested page in {0, 1}, no overlay, native switching allowed. Elsewhere
   it stays native Select.
@@ -254,6 +286,18 @@ title menu (0x1800512a0) and the file select (0x1801e21c0) read the touch screen
 and the pause menu runs its sub-menus 1-8 there (0x180059390). The logged fields
 are regression tests (core `dawn_second_session_menus_and_map_fields`).
 
+## Third in-game session (29/10/2026, build 7769e06)
+
+Reported by the user: the title and pause menus show the main screen alone, View
+opens the map from the right panel, the marker pulses in the enlarged map and a
+direction held or pressed after closing the view moves at once. The warp room
+was not tried again. The two merchants' menus still showed both screens: the
+log shows each as its own mode (0xd, then 0xc) entered from running gameplay,
+the game frozen, event flags 0x80400b1, black fades between their sub-screens,
+the top screen left on the map/Status pair (native Select switched it once) and
+the way back to gameplay; no other mode or page. Those fields are regression
+tests (core `dawn_merchant_menus_stay_on_the_main_screen`).
+
 ## Not established yet
 
 - The collection layout in Dawn (assumed identical to Portrait's: gameplay left,
@@ -296,4 +340,9 @@ from the very beginning of the game only.
 7. Mouse/touch: touches on the enlarged image land on the aimed spot; no touch
    from the black bars or from clicks made in the view.
 8. View + Y with the view open; controller disconnection; the collection menu.
-9. Normal exit; game files and progress verified.
+9. Merchants: talk to each, go through every option (buy/sell with buttons and
+   with taps, quantity, a synthesis and its result, a release up to its
+   confirmation only if wanted), leave: main screen alone throughout, no flash,
+   View native Select, View+Y switches the mod; the log shows mode 0xc/0xd
+   with `menu=` 0-3.
+10. Normal exit; game files and progress verified.

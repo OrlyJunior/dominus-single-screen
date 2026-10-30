@@ -132,3 +132,12 @@ sequences and Dawn's marker cycle against both titles' limits), WARP with
 `--proxy` 19 (adds: Dawn's identity mode stays frozen without dra01, and a
 title change drops captures and restores the limits), guard 1, Steam pad 10,
 Python 19, installer fixtures 14 with RealGameTouched=false.
+
+Third session (7769e06, installed 29/10/2026): menus, the view, the pulsing
+marker and directions after the view confirmed by the user; the merchants'
+menus still showed both screens. Their follow-up (branch dev/dawn-shops, not
+tested in game): core 69 groups (adds the logged merchant sequences), WARP with
+`--proxy` 19, guard 1, Steam pad 10, Python 19, all built while the game was
+open (no game process touched). The installer fixtures were not run then, to
+stay clear of the running game; the installer scripts are unchanged since
+their last 14/14 run.
