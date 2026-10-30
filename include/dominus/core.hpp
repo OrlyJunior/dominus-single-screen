@@ -708,7 +708,12 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 // start/load. The pause menu 0x180059390 runs its sub-menus (sub-state
 // 0x1808eb249 1-8, several reading the touch screen) on the main screen and
 // leaves the top-screen page alone; it asks for page 3 only when it exits to
-// something other than gameplay. The top-screen manager
+// something other than gameplay. The two merchants' menus are modes of their
+// own on the same frame (0x180065960 opening, 0x180066000 options, then two
+// sub-menus, by sub-state 0x1808eb249 0-3): 0xc the shop (0x180065780; buy
+// and sell, 0x1800667f0) and 0xd the synthesis merchant (0x180052480;
+// 0x180052510, 0x180053750); like the pause menu they draw on the main screen
+// and leave the map/Status pair live on the top one. The top-screen manager
 // 0x180022100 shows page 0x180965748 and switches to the requested
 // 0x180965749. Pages 0 (map) and 1 (Status) are a pair: the shown page is
 // drawn on the first sub-screen bank and, unless the overlay flag
@@ -729,6 +734,7 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 // (0x180022010); 0x200001 blocks the game's own pause menu (Start).
 struct DawnStateFields {
     std::uint8_t mode = 0xff;
+    std::uint8_t menuState = 0xff;  // the mode's own sub-state (0x1808eb249)
     std::uint8_t gameState = 0xff;
     std::uint8_t subState = 0xff;  // the step of gameState (0x180963ecd)
     std::uint8_t gameType = 0xff;
@@ -741,6 +747,7 @@ struct DawnStateFields {
     std::int32_t brightness = -1;
 };
 inline constexpr std::uint8_t DawnGameplayMode = 2, DawnRunningState = 2;
+inline constexpr std::uint8_t DawnPauseMenuMode = 0x0a, DawnShopMode = 0x0c, DawnSynthesisMode = 0x0d;
 // Only the warp room device 0x180077390 enters sub-state 4: Up at its centre
 // stores the word 0x104 (sub-state 4, step 1), freezes the game and sets event
 // flag 1. 0x180078500 then runs the choice on the main screen (the castle map
@@ -754,8 +761,8 @@ bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexce
 // sub-state, whatever the top screen shows, and in the warp room's destination
 // choice (sub-state 4 step 1 with page 2 shown and requested, no map to
 // enlarge); the title screen, title menu and file/mode select while the top
-// screen shows only the decorative page 3; the pause menu of the normal game.
-// Start/load modes hold the current layout.
+// screen shows only the decorative page 3; the pause menu and the two
+// merchants' menus of the normal game. Start/load modes hold the current layout.
 // View is the mod's command only in gameplay with a live map: the top screen
 // holds the map/Status pair (page 0 or 1 shown and requested, no overlay,
 // native switching allowed); elsewhere, menus included, it stays native

@@ -89,7 +89,7 @@ bool scene_key_changed(const TitleSceneFields& a,const TitleSceneFields& b) noex
     if(a.title==Title::DawnOfSorrow){
         const auto& x=a.dawn;const auto& y=b.dawn;
         constexpr auto Flags=DawnPageLockFlag|DawnMenuBlockFlags;
-        return x.mode!=y.mode||x.gameState!=y.gameState||x.subState!=y.subState||x.gameType!=y.gameType||x.page!=y.page||x.requestedPage!=y.requestedPage||
+        return x.mode!=y.mode||x.menuState!=y.menuState||x.gameState!=y.gameState||x.subState!=y.subState||x.gameType!=y.gameType||x.page!=y.page||x.requestedPage!=y.requestedPage||
                x.pageOverlay!=y.pageOverlay||x.frozen!=y.frozen||(x.eventFlags&Flags)!=(y.eventFlags&Flags)||
                (x.fadeFrames!=0)!=(y.fadeFrames!=0)||(x.brightness!=0)!=(y.brightness!=0);
     }
@@ -100,7 +100,7 @@ void log_scene(State& s,const char* what) noexcept {
     char line[260]{};
     if(s.sceneFields.title==Title::DawnOfSorrow){
         const auto& f=s.sceneFields.dawn;
-        std::snprintf(line,sizeof(line),"%s,title=dawn,scene=%s,available=%u,mode=0x%x,state=%u,step=%u,type=%u,page=%u/%u,overlay=%u,frozen=%u,flags=0x%x,fade=%d/%d,single=%u,hold=%u,gameplay=%u,mapReady=%u,mapPanel=%d",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.subState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(f.pageOverlay),unsigned(f.frozen),f.eventFlags,f.fadeFrames,f.brightness,unsigned(s.scene.singleScreen),unsigned(s.scene.holdLayout),unsigned(s.gameplay),unsigned(s.mapReady),s.scene.mapPanel);
+        std::snprintf(line,sizeof(line),"%s,title=dawn,scene=%s,available=%u,mode=0x%x,menu=%u,state=%u,step=%u,type=%u,page=%u/%u,overlay=%u,frozen=%u,flags=0x%x,fade=%d/%d,single=%u,hold=%u,gameplay=%u,mapReady=%u,mapPanel=%d",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.menuState),unsigned(f.gameState),unsigned(f.subState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(f.pageOverlay),unsigned(f.frozen),f.eventFlags,f.fadeFrames,f.brightness,unsigned(s.scene.singleScreen),unsigned(s.scene.holdLayout),unsigned(s.gameplay),unsigned(s.mapReady),s.scene.mapPanel);
     }else{
         const auto& f=s.sceneFields.portrait;
         std::snprintf(line,sizeof(line),"%s,scene=%s,available=%u,mode=0x%x,state=%u,type=%u,page=%u/%u,gameplay=%u,mapReady=%u",what,game_scene_name(s.scene.scene),unsigned(s.sceneAvailable),unsigned(f.mode),unsigned(f.gameState),unsigned(f.gameType),unsigned(f.page),unsigned(f.requestedPage),unsigned(s.gameplay),unsigned(s.mapReady));

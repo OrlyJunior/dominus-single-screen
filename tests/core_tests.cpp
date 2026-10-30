@@ -1811,6 +1811,7 @@ DawnStateFields dawn_fields(std::uint8_t mode, std::uint8_t state = 2, std::uint
                             std::uint8_t page = 0, std::uint8_t requested = 0) {
     DawnStateFields fields{};
     fields.mode = mode;
+    fields.menuState = 0;
     fields.gameState = state;
     fields.gameType = type;
     fields.page = page;
@@ -1847,7 +1848,8 @@ void dawn_scene_follows_gameplay_and_never_trusts_the_page_alone() {
             verdict = classify_dawn_scene(dawn_fields(static_cast<std::uint8_t>(mode), 2, 0, page, page), true);
             CHECK(!verdict.gameplay && !verdict.mapReady && verdict.mapPanel == -1 && verdict.viewPages == 0);
             const bool menu = (mode == 0x03 || mode == 0x04 || mode == 0x09) && page == 3;
-            CHECK(verdict.singleScreen == (menu || mode == 0x0a));
+            CHECK(verdict.singleScreen == (menu || mode == DawnPauseMenuMode || mode == DawnShopMode ||
+                                           mode == DawnSynthesisMode));
             CHECK(verdict.holdLayout == (mode == 0x00 || mode == 0x01));
         }
     }
@@ -1866,7 +1868,8 @@ void dawn_scene_follows_gameplay_and_never_trusts_the_page_alone() {
     for (const std::uint8_t type : {1, 2, 3, 4, 5, 0xff}) {
         verdict = classify_dawn_scene(dawn_fields(2, 2, type, 0, 0), true);
         CHECK(verdict.scene == GameScene::ExtraMode && !verdict.singleScreen && !verdict.mapReady);
-        CHECK(!classify_dawn_scene(dawn_fields(0x0a, 2, type, 0, 0), true).singleScreen);
+        for (const std::uint8_t menu : {DawnPauseMenuMode, DawnShopMode, DawnSynthesisMode})
+            CHECK(!classify_dawn_scene(dawn_fields(menu, 2, type, 0, 0), true).singleScreen);
     }
     // Any other top screen in gameplay keeps the single screen, but without a
     // live map View stays native Select and nothing opens.
@@ -2118,6 +2121,56 @@ void dawn_warp_choice_stays_on_the_main_screen() {
     CHECK(same_dawn_fields(choice, choice) && !same_dawn_fields(choice, other));
 }
 
+// The two merchants' menus (fourth round, 29/10/2026): fields logged in the
+// session of build 7769e06, which kept the original layout there. Mode 0xd
+// (synthesis merchant, first visit) and 0xc (shop), entered from running
+// gameplay, with their black fades between sub-screens, a native Select page
+// switch in the shop, and the way back. The menu sub-state was not logged yet.
+void dawn_merchant_menus_stay_on_the_main_screen() {
+    const auto& dawn = *adaptation_profile(Title::DawnOfSorrow);
+    for (const std::uint8_t mode : {DawnShopMode, DawnSynthesisMode}) {
+        const DawnStateFields visit[] = {
+            logged_dawn(mode, 2, 0, 0, 0, 0, 0x400b1, 0, 0), logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 0, -65536),
+            logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 7, -57344), logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 0, 0),
+            logged_dawn(mode, 2, 0, 1, 0, 1, 0x80400b1, 0, 0), logged_dawn(mode, 2, 1, 1, 0, 1, 0x80400b1, 0, 0),
+            logged_dawn(mode, 2, 1, 0, 0, 1, 0x80400b1, 0, 0), logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 8, 0),
+            logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 7, -8192),
+        };
+        for (const auto& logged : visit) {
+            for (std::uint8_t menu = 0; menu <= 4; ++menu) {
+                auto fields = logged;
+                fields.subState = 1;
+                fields.menuState = menu;
+                const auto verdict = classify_dawn_scene(fields, true);
+                // The main screen alone, nothing to enlarge: View stays Select.
+                CHECK(verdict.scene == GameScene::InGameMenu && verdict.singleScreen && !verdict.holdLayout);
+                CHECK(!verdict.gameplay && !verdict.mapReady && verdict.mapPanel == -1 && verdict.viewPages == 0);
+                for (const auto previous : {Presentation::Original, Presentation::Gameplay})
+                    CHECK(title_presentation(dawn, verdict, true, false, previous) == Presentation::Gameplay);
+                CHECK(title_presentation(dawn, verdict, false, false, Presentation::Gameplay) == Presentation::Original);
+            }
+        }
+        // Their other game types keep the original layout, as the pause menu's.
+        for (const std::uint8_t type : {1, 2, 3, 4, 5, 0xff}) {
+            auto fields = logged_dawn(mode, 2, 0, 0, 0, 1, 0x80400b1, 0, 0);
+            fields.gameType = type;
+            CHECK(!classify_dawn_scene(fields, true).singleScreen);
+        }
+    }
+    // Before and after: running gameplay, single screen, the map ready again.
+    auto verdict = classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x10400b1, 0, 0), true);
+    CHECK(verdict.singleScreen && verdict.gameplay && !verdict.mapReady);
+    verdict = classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x400b1, 8, -65536), true);
+    CHECK(verdict.singleScreen && !verdict.mapReady);
+    verdict = classify_dawn_scene(logged_dawn(2, 2, 0, 0, 0, 0, 0x40030, 0, 0), true);
+    CHECK(verdict.singleScreen && verdict.mapReady && verdict.mapPanel == 0);
+    // The menu sub-state is part of a stable sample.
+    auto a = logged_dawn(DawnShopMode, 2, 0, 0, 0, 1, 0x80400b1, 0, 0), b = a;
+    a.menuState = 1;
+    b.menuState = 2;
+    CHECK(same_dawn_fields(a, a) && !same_dawn_fields(a, b));
+}
+
 void title_presentation_keeps_portrait_and_follows_dawn_scenes() {
     const auto& portrait = *adaptation_profile(Title::PortraitOfRuin);
     const auto& dawn = *adaptation_profile(Title::DawnOfSorrow);
@@ -2198,6 +2251,8 @@ void dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay() {
     const auto blocked = logged_dawn(2, 2, 0, 0, 0, 0, 0x40040081, 0, 0);
     const auto pair = logged_dawn(2, 2, 0, 0, 0, 0, 0x40000000, 0, 0);
     const auto pauseMenu = logged_dawn(0x0a, 2, 0, 0, 0, 1, 0x48000000, 0, 0);
+    const auto shop = logged_dawn(DawnShopMode, 2, 0, 0, 0, 1, 0x80400b1, 0, 0);
+    const auto synthesis = logged_dawn(DawnSynthesisMode, 2, 0, 0, 0, 1, 0x80400b1, 0, 0);
     // The collection's own menu pauses the emulator: View+Y passes unchanged
     // there and does not switch the mod (v0.1.1 isolation, kept).
     step(0, collection, true);
@@ -2242,6 +2297,25 @@ void dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay() {
     CHECK(step(0, pauseMenu) == ButtonView && !view);
     step(0, pair);
     CHECK(presentation == Presentation::Gameplay);
+    // The merchants' menus: the same, and View+Y still switches the mod there.
+    for (const auto& menu : {shop, synthesis}) {
+        step(0, menu);
+        CHECK(presentation == Presentation::Gameplay);
+        CHECK(step(ButtonView, menu) == 0);
+        CHECK(step(0, menu) == ButtonView && !view && !refused && presentation == Presentation::Gameplay);
+        step(ButtonView, menu);
+        step(ButtonView | ButtonY, menu);
+        step(0, menu);
+        CHECK(!enabled && presentation == Presentation::Original);
+        step(ButtonView, menu);
+        CHECK(step(0, menu) == ButtonView && !view);
+        step(ButtonView, menu);
+        step(ButtonView | ButtonY, menu);
+        step(0, menu);
+        CHECK(enabled && presentation == Presentation::Gameplay);
+        step(0, pair);
+        CHECK(presentation == Presentation::Gameplay && !view);
+    }
     // View+Y in gameplay switches the mod off (both screens) and on again.
     step(ButtonView, pair);
     step(ButtonView | ButtonY, pair);
@@ -2672,6 +2746,7 @@ int main() {
         {"dawn_first_session_fields_reach_single_screen_in_gameplay", dawn_first_session_fields_reach_single_screen_in_gameplay},
         {"dawn_second_session_menus_and_map_fields", dawn_second_session_menus_and_map_fields},
         {"dawn_warp_choice_stays_on_the_main_screen", dawn_warp_choice_stays_on_the_main_screen},
+        {"dawn_merchant_menus_stay_on_the_main_screen", dawn_merchant_menus_stay_on_the_main_screen},
         {"title_presentation_keeps_portrait_and_follows_dawn_scenes", title_presentation_keeps_portrait_and_follows_dawn_scenes},
         {"dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay", dawn_mod_toggles_in_menus_and_single_screen_starts_with_gameplay},
         {"scene_dispatch_follows_the_verified_title", scene_dispatch_follows_the_verified_title},

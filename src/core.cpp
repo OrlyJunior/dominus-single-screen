@@ -1024,7 +1024,8 @@ SceneVerdict classify_portrait_scene(const PortraitStateFields& fields, bool ava
 }
 
 bool same_dawn_fields(const DawnStateFields& a, const DawnStateFields& b) noexcept {
-    return a.mode == b.mode && a.gameState == b.gameState && a.subState == b.subState &&
+    return a.mode == b.mode && a.menuState == b.menuState && a.gameState == b.gameState &&
+           a.subState == b.subState &&
            a.gameType == b.gameType && a.page == b.page &&
            a.requestedPage == b.requestedPage && a.pageOverlay == b.pageOverlay && a.frozen == b.frozen &&
            a.eventFlags == b.eventFlags && a.fadeFrames == b.fadeFrames && a.brightness == b.brightness;
@@ -1087,8 +1088,10 @@ SceneVerdict classify_dawn_scene(const DawnStateFields& fields, bool available) 
             verdict.scene = fields.mode == 0x03 ? GameScene::Title : GameScene::StartMenu;
             verdict.singleScreen = fields.page == 3 && fields.requestedPage == 3;
             return verdict;
-        case 0x0a:
-            // The pause menu runs on the main screen; View stays native there.
+        case DawnPauseMenuMode: case DawnShopMode: case DawnSynthesisMode:
+            // The pause menu and the merchants' menus run on the main screen
+            // (portrait, options, lists, their touch input); the top screen
+            // keeps the map/Status pair. View stays native Select there.
             verdict.scene = GameScene::InGameMenu;
             verdict.singleScreen = fields.gameType == 0;
             return verdict;
