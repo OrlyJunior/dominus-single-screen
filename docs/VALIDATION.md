@@ -97,9 +97,9 @@ Not validated individually: extra modes, Boss Rush, endings, Haunted Castle
 
 Portrait of Ruin runs the v0.1.1 profile and rules; its marker code path now
 reads the title-specific position identity and limits (Portrait's are
-unchanged, covered by the v0.1.1 groups and the WARP replay tests). Dawn is
-off by default; with it off the detector, gate and input paths behave as
-v0.1.1.
+unchanged, covered by the v0.1.1 groups and the WARP replay tests). The
+release INI enables Dawn; with it off the detector, gate and input paths
+behave as v0.1.1.
 
 Synthetic, Zig 0.13.0 `-Release`: core 69 groups (adds profiles, Dawn
 detection on/off, per-title hashing, the title gate, Dawn scene rules over every
@@ -115,7 +115,8 @@ enumeration).
 In game, by the author, with experimental builds installed by the repository
 scripts over verified progress snapshots (private logs, not distributed): Dawn
 identification, hooks and View+Y in menus and gameplay; the single screen in
-gameplay, the title menus, the pause menu and both merchants' menus; View
+gameplay, the title menus, the pause menu, the warp rooms' destination choice
+and both merchants' menus; View
 opening the map from the right panel and LB/RB; the marker pulsing in the
 enlarged map; directions acting right after closing the view. Defects found
 along the way (single screen gated on the top-screen page, menus in the
@@ -123,7 +124,7 @@ original layout, directions withheld after closing, residual fade levels
 refusing the view, the warp choice and the merchants' menus in the original
 layout) were fixed, each with regression tests built from the logged fields.
 
-Not validated in game: the warp room's destination choice (static analysis and
-logged fields only), touch in every Dawn menu, Dawn's other game modes, and a
-Portrait session on the v0.2.0 build itself (its code paths are unchanged
-except the marker identity plumbing).
+Not validated in game: touch in every Dawn menu, Dawn's other game modes, and
+**Portrait of Ruin on the v0.2.0 build itself**: no new manual Portrait session
+was run for this version; its rules are unchanged and its marker path only
+gained the title-specific identity and limits (synthetic tests above).

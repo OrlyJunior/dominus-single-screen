@@ -1,7 +1,7 @@
 # Dominus: Single Screen — 0.2.0
 
 Portrait of Ruin on Castlevania Dominus Collection, Steam/Windows x64 only, with
-experimental, opt-in Dawn of Sorrow support (below). Other titles/layouts remain
+experimental Dawn of Sorrow support (below). Other titles/layouts remain
 unsupported; the mod stays inert in them.
 
 Close the game. Extract this locally built package outside the game folder and
@@ -26,8 +26,9 @@ their original input and layout. Inside Portrait the enlarged map opens only in
 gameplay; on the title screen and menus View stays native Select. Extra modes
 (Sisters, Richter, ...) and Boss Rush keep View as Select.
 
-Dawn of Sorrow (experimental): set `EnableExperimentalDawn=1` in this package's
-dominus-single-screen.ini before running Install.bat. Then, with the mod on, the
+Dawn of Sorrow (experimental, on by default; set `EnableExperimentalDawn=0` in
+this package's dominus-single-screen.ini before Install.bat to leave Dawn
+untouched): with the mod on, the
 main screen appears alone in gameplay, the title and pause menus, the warp rooms'
 destination choice and the merchants' menus; View opens the enlarged map with
 native pause where the map is live (LB/RB: Status) and stays Select elsewhere;

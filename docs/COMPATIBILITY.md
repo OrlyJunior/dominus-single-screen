@@ -7,7 +7,7 @@ Portrait position provider requires dra02.dll SHA-256
 From v0.1.1 the same dra02.dll, loaded by the EmuTask from the game directory,
 is also required before any Portrait feature or input filtering runs; other
 titles and an altered dra02.dll leave the mod inert ([TITLE-ISOLATION.md](TITLE-ISOLATION.md)).
-Experimental Dawn of Sorrow support (v0.2.0, opt-in) likewise requires dra01.dll
+Experimental Dawn of Sorrow support (v0.2.0, `EnableExperimentalDawn`) likewise requires dra01.dll
 SHA-256 `52E20914E3668ED3E88BC858540292D52FCF6ED3DFF6F461AC49B53FA2F9CD6E` for its
 identification and marker position identity ([DAWN-OF-SORROW.md](DAWN-OF-SORROW.md)).
 These fingerprints are identification data, not game assets or a redistribution

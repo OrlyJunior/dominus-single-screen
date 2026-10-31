@@ -2,8 +2,9 @@
 
 ## 0.2.0 — 2026-10-30
 
-- **Experimental Dawn of Sorrow support**, opt-in (`EnableExperimentalDawn=1`),
-  validated in game by its author over several sessions:
+- **Experimental Dawn of Sorrow support**, on by default
+  (`EnableExperimentalDawn=1`; 0 turns it off), validated in game by its author
+  over several sessions:
   - the main screen alone in gameplay, the title screen and menus, the pause
     menu, the warp rooms' destination choice and both merchants' menus;
   - View opens the enlarged map under the native pause, from whichever panel
@@ -18,8 +19,8 @@
   - sequences, game over, other game modes and unknown states keep the original
     layout. See docs/DAWN-OF-SORROW.md.
 - Title-generic identification, scene dispatch, gate and adaptation profiles.
-  Portrait keeps its v0.1.1 profile and behavior; with the Dawn switch off the
-  mod stays inert in Dawn, as in 0.1.1.
+  Portrait keeps its v0.1.1 profile and behavior (synthetic tests only for this
+  version); with the Dawn switch off the mod stays inert in Dawn, as in 0.1.1.
 - Install/removal judge every `game.exe` by its full image path and file
   identity: another installation (e.g. Castlevania Advance Collection) may stay
   open; this game or an unidentifiable process still refuses.

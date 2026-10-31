@@ -1,12 +1,12 @@
 # Dawn of Sorrow (experimental, v0.2.0)
 
-Status: **experimental, opt-in.** The profile is off by default
-(`EnableExperimentalDawn=0` in the INI): Dawn then stays exactly as inert as in
-v0.1.1. Portrait of Ruin keeps its validated v0.1.1 behavior with the switch on
+Status: **experimental**, enabled by the release INI
+(`EnableExperimentalDawn=1`); with 0, or the key absent, Dawn stays exactly as
+inert as in v0.1.1. Portrait of Ruin keeps its v0.1.1 rules with the switch on
 or off. The author's in-game sessions (28-30/10/2026, below) confirmed gameplay,
 the title and pause menus, the enlarged view with its pulsing marker, the
-directions after closing it, and both merchants' menus. The warp room rule was
-built from logged fields and static analysis; it is not confirmed in game yet.
+directions after closing it, the warp rooms' destination choice and both
+merchants' menus.
 
 The text avoids story, area, enemy and item details; mechanics are named only
 generically.
@@ -302,23 +302,18 @@ tests (core `dawn_merchant_menus_stay_on_the_main_screen`).
 ## Fourth in-game session (30/10/2026, build 6c68834)
 
 Reported by the user: both merchants' menus show the main screen alone through
-their options and sub-menus.
+their options and sub-menus, and the warp rooms' destination choice works in
+the single screen.
 
 ## Not established yet
 
-- The collection layout in Dawn (assumed identical to Portrait's: gameplay left,
-  two panels right) and which bank goes to which panel.
-- Composition, touch remapping and the enlarged view in Dawn: never reached in
-  the first session, still to validate.
-- Which collection panel shows each sub-screen bank in Dawn (assumed as in
-  Portrait: the first bank upper, the second lower); the map's panel follows it.
+- Touch in every Dawn menu and interaction (each one was not tried
+  individually), and Dawn's other game modes (they keep the original layout).
 - Whether any pause sub-menu needs the top screen (stats, descriptions): it is
   hidden in the single screen; View+Y shows the collection layout.
 - Sub-state 5 and every flag bit used above beyond the checks documented
   here; validation logs print all of them (`live,scene,title=dawn,...`, now
   with the sub-state's step).
-- The marker replay in game: whether a cycle completes (one 39-tick lap or two
-  laps) and matches the frozen frame.
 - Mouse remap assumes the back buffer is stretched over the client area, as the
   collection's own conversion does.
 

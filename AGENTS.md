@@ -1,7 +1,7 @@
 # Contributor instructions
 
 This repository publishes the validated Portrait of Ruin implementation and an
-experimental, opt-in Dawn of Sorrow profile (v0.2.0). Do not assume another
+experimental Dawn of Sorrow profile (v0.2.0). Do not assume another
 title, game fingerprint, display layout, or ABI is supported.
 Read README.md and docs/ARCHITECTURE.md before changing runtime behavior.
 
