@@ -83,7 +83,7 @@ and retention, the disconnect path and stale-pause recovery. Native hooks remain
 pass-through observers in every title. `EnableNativeObserver=0` leaves the mod
 inert.
 
-## Development branch: experimental Dawn of Sorrow
+## Experimental Dawn of Sorrow (v0.2.0, opt-in)
 
 With `EnableExperimentalDawn=1` the detector also accepts index 0 with the exact
 `dra01.dll` (SHA-256 `52E20914…CD6E`) under the same checks, and Dawn's own

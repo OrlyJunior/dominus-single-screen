@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — 2026-10-30
+
+- Experimental Dawn of Sorrow support, off until you set
+  `EnableExperimentalDawn=1` in dominus-single-screen.ini before installing:
+  the main screen alone in gameplay, menus, the pause menu, the warp rooms and
+  the merchants' menus; View opens the enlarged map with native pause (LB/RB:
+  Status), with a pulsing marker; touches are moved to the right spot of the
+  touch screen. Sequences, game over and other modes keep the original layout.
+- Portrait of Ruin is unchanged. With the switch off Dawn stays untouched.
+- The installer accepts another open `game.exe` that is provably a different
+  installation (e.g. Castlevania Advance Collection).
+
 ## 0.1.1 — 2026-10-25
 
 - The mod acts only while Portrait of Ruin is the verified active game. Dawn of

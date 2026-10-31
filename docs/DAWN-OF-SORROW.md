@@ -1,11 +1,12 @@
-# Dawn of Sorrow (experimental, development branch)
+# Dawn of Sorrow (experimental, v0.2.0)
 
-Status: **experimental, behind a switch.** The profile is off by default
+Status: **experimental, opt-in.** The profile is off by default
 (`EnableExperimentalDawn=0` in the INI): Dawn then stays exactly as inert as in
 v0.1.1. Portrait of Ruin keeps its validated v0.1.1 behavior with the switch on
-or off. Two in-game sessions (28/10/2026, below) confirmed the single screen in
-gameplay; the menus, the enlarged view, the warp room and the marker replay
-described here are not validated in game yet.
+or off. The author's in-game sessions (28-30/10/2026, below) confirmed gameplay,
+the title and pause menus, the enlarged view with its pulsing marker, the
+directions after closing it, and both merchants' menus. The warp room rule was
+built from logged fields and static analysis; it is not confirmed in game yet.
 
 The text avoids story, area, enemy and item details; mechanics are named only
 generically.
@@ -297,6 +298,11 @@ the game frozen, event flags 0x80400b1, black fades between their sub-screens,
 the top screen left on the map/Status pair (native Select switched it once) and
 the way back to gameplay; no other mode or page. Those fields are regression
 tests (core `dawn_merchant_menus_stay_on_the_main_screen`).
+
+## Fourth in-game session (30/10/2026, build 6c68834)
+
+Reported by the user: both merchants' menus show the main screen alone through
+their options and sub-menus.
 
 ## Not established yet
 

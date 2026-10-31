@@ -28,7 +28,9 @@ an integrity manifest. On failure it removes only unchanged files it created.
 It does not alter original executable/DLL/data files or user progress.
 
 Launch normally from Steam only when you choose to play. Use Portrait of Ruin,
-the supported layout and View + Y to activate. Other titles remain unsupported.
+the supported layout and View + Y to activate. Experimental Dawn of Sorrow
+support needs `EnableExperimentalDawn=1` in the package INI before installing.
+Other titles remain unsupported.
 
 To remove a script-installed mod, with the game closed:
 

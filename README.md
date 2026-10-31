@@ -1,8 +1,9 @@
 # Dominus: Single Screen
 
-**v0.1.1 — title isolation and gameplay-only map, validated in game (internal rc7).**
+**v0.2.0 — experimental Dawn of Sorrow support; Portrait of Ruin as validated in v0.1.1.**
 A native C++ mod for **Castlevania Dominus Collection** on Steam/Windows x64,
-currently supporting **Castlevania: Portrait of Ruin** only.
+supporting **Castlevania: Portrait of Ruin** and, experimentally and opt-in,
+**Castlevania: Dawn of Sorrow**.
 
 ## Features
 
@@ -12,8 +13,13 @@ currently supporting **Castlevania: Portrait of Ruin** only.
 - Native map-marker animation replay from captured game pixels, including safe
   cycle retention across stationary map reopenings and asynchronous pause release.
 - With the mod disabled, View is forwarded as native Select on release.
-- Acts only in Portrait of Ruin: the other collection games and the collection's
-  menus keep their original input and layout, with the mod on or off.
+- Acts only in a verified supported game: the other collection games and the
+  collection's menus keep their original input and layout, with the mod on or off.
+- **Dawn of Sorrow (experimental, `EnableExperimentalDawn=1`):** the main screen
+  alone in gameplay, menus, the pause menu, the warp rooms and the merchants'
+  menus; the enlarged map with native pause, LB/RB to Status and a pulsing
+  marker; mouse/touch positions remapped to the touch screen
+  ([notes](docs/DAWN-OF-SORROW.md)).
 - The enlarged map opens only during Portrait gameplay; on its title screen and
   menus View stays native Select (View + Y still toggles the mod).
 - Separate D3D11 proxy files with a version gate and manifest-based installation/removal;
@@ -26,8 +32,8 @@ The mod starts **off**. Load Portrait of Ruin and press View + Y.
 | Area | Status |
 | --- | --- |
 | Portrait of Ruin | Validated in gameplay with an Xbox-compatible controller through Steam Input |
-| Dawn of Sorrow / Order of Ecclesia / Haunted Castle | Unsupported; the mod stays inert there and input is untouched ([title isolation](docs/TITLE-ISOLATION.md)). v0.1.0 users: update, since v0.1.0 delayed Select in those games |
-| Dawn of Sorrow (development branch only) | Experimental profile behind `EnableExperimentalDawn=1`, off by default and not validated in game ([notes](docs/DAWN-OF-SORROW.md)) |
+| Dawn of Sorrow | Experimental, off by default: `EnableExperimentalDawn=1` in the package INI before installing. Validated in game by the author (gameplay, menus, view, marker, warp rooms, merchants); other situations keep the original layout ([notes](docs/DAWN-OF-SORROW.md)) |
+| Order of Ecclesia / Haunted Castle | Unsupported; the mod stays inert there and input is untouched ([title isolation](docs/TITLE-ISOLATION.md)). v0.1.0 users: update, since v0.1.0 delayed Select in those games |
 | Display | Validated at 1920x1080 and 2560x1440, 16:9 |
 | Collection layout | Gameplay left; map and Status stacked on the right |
 | Game executable | SHA-256 `E6FA885F560C8A47640FF8DF4DE3CE4A938C8053EB11A90A7B65F5EBF1AB6B64` |

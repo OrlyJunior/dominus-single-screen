@@ -1,5 +1,14 @@
 # Releases
 
+## v0.2.0
+
+Prepared on `release/v0.2.0`, which carries the experimental Dawn of Sorrow work
+(the former local development branches, linear on top of v0.1.1) plus release
+documentation; it reaches `main` through a pull request and the annotated
+v0.2.0 tag marks that merge. Dawn stays experimental and opt-in. As before, the
+GitHub release carries notes only and the end-user package is built locally
+with `scripts/Package-Release.ps1`; its DLL SHA-256 is recorded in VALIDATION.md.
+
 ## v0.1.1
 
 The v0.1.1 annotated tag marks the merge of the title-isolation and

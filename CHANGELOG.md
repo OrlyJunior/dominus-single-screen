@@ -1,14 +1,28 @@
 # Changelog
 
-## Unreleased (development branch `dev/dawn-of-sorrow`)
+## 0.2.0 — 2026-10-30
 
-- Experimental Dawn of Sorrow profile, off by default (`EnableExperimentalDawn`),
-  not validated in game: single screen in normal gameplay, View opens the
-  enlarged top screen on the map with native pause, LB/RB switch map/Status,
-  original layout automatically outside plain gameplay, mouse/touch positions
-  remapped to the original panel. See docs/DAWN-OF-SORROW.md.
-- Title-generic identification, scene dispatch, gate and adaptation profiles;
-  Portrait keeps its v0.1.1 profile and behavior.
+- **Experimental Dawn of Sorrow support**, opt-in (`EnableExperimentalDawn=1`),
+  validated in game by its author over several sessions:
+  - the main screen alone in gameplay, the title screen and menus, the pause
+    menu, the warp rooms' destination choice and both merchants' menus;
+  - View opens the enlarged map under the native pause, from whichever panel
+    holds it; LB/RB switch to Status; outside gameplay with a live map View
+    stays native Select; View+Y toggles the mod everywhere in Dawn;
+  - the map marker keeps pulsing in the enlarged map, replayed from the game's
+    own frames (dra01 position identity, same 39-frame cycle as Portrait);
+  - mouse/touch positions are moved from the enlarged image to the original
+    touch screen; no touch reaches the game from the black bars or the view;
+  - presses made in the view never reach the game, while a direction held or
+    pressed when it closes moves at once;
+  - sequences, game over, other game modes and unknown states keep the original
+    layout. See docs/DAWN-OF-SORROW.md.
+- Title-generic identification, scene dispatch, gate and adaptation profiles.
+  Portrait keeps its v0.1.1 profile and behavior; with the Dawn switch off the
+  mod stays inert in Dawn, as in 0.1.1.
+- Install/removal judge every `game.exe` by its full image path and file
+  identity: another installation (e.g. Castlevania Advance Collection) may stay
+  open; this game or an unidentifiable process still refuses.
 
 ## 0.1.1 — 2026-10-25
 

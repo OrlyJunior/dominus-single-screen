@@ -93,51 +93,37 @@ In game, installed with the repository scripts over a verified private backup
 Not validated individually: extra modes, Boss Rush, endings, Haunted Castle
 (not visited in the logged sessions), and every in-game dialogue or event.
 
-## Development branch: experimental Dawn of Sorrow (synthetic only)
+## v0.2.0 (experimental Dawn of Sorrow, 2026-10-30)
 
-Built with Zig 0.13.0 `-Release` into `out/`; nothing installed, no game run.
-Core 60 groups (the 50 of v0.1.1 plus profiles, Dawn detection on/off,
-per-title hashing, title gate, Dawn scene rules over every mode/sub-state/page,
-dispatch, LB/RB and view-owned press reservation over every button
-combination, the Dawn view input sequences, pointer remapping and hiding), WARP with `--proxy` 19
-(the real title platform fails closed for Portrait and Dawn in a non-game host),
-guard 1, Steam pad 10 (adds: presses can be withheld through the real builder
-but never injected), Python 19, installer fixtures 14 with RealGameTouched=false
-(adds file identity, process decision and live enumeration; run while
-Castlevania Advance Collection was open, correctly identified and allowed).
+Portrait of Ruin runs the v0.1.1 profile and rules; its marker code path now
+reads the title-specific position identity and limits (Portrait's are
+unchanged, covered by the v0.1.1 groups and the WARP replay tests). Dawn is
+off by default; with it off the detector, gate and input paths behave as
+v0.1.1.
 
-The Dawn profile is off by default; with it off the detector, gate and input
-paths behave as v0.1.1 (covered by the unchanged v0.1.1 groups). In-game
-validation of Dawn is partial (below); see the plan in DAWN-OF-SORROW.md.
+Synthetic, Zig 0.13.0 `-Release`: core 69 groups (adds profiles, Dawn
+detection on/off, per-title hashing, the title gate, Dawn scene rules over every
+mode/sub-state/page, the fields logged in the author's sessions, View input
+ownership and page reservation over every button combination, pointer remap and
+hiding, Dawn's marker cycle against both titles' limits), WARP with `--proxy` 19
+(adds Dawn's identity mode staying frozen without dra01 and a title change
+dropping captures), guard 1, Steam pad 10 (presses can be withheld through the
+real builder but never injected), Python 19, installer fixtures 14 with
+RealGameTouched=false (adds file identity, process decision and live
+enumeration).
 
-First in-game session of the experimental Dawn build (28/10/2026, c341626):
-identification, hooks and View+Y worked, but the single screen never appeared
-because the scene rule required the map/Status pair, which the opening of a new
-game does not show (see DAWN-OF-SORROW.md). Fixed in the next build; core then
-63 groups, other suites unchanged and passing. Dawn remains unvalidated in game.
+In game, by the author, with experimental builds installed by the repository
+scripts over verified progress snapshots (private logs, not distributed): Dawn
+identification, hooks and View+Y in menus and gameplay; the single screen in
+gameplay, the title menus, the pause menu and both merchants' menus; View
+opening the map from the right panel and LB/RB; the marker pulsing in the
+enlarged map; directions acting right after closing the view. Defects found
+along the way (single screen gated on the top-screen page, menus in the
+original layout, directions withheld after closing, residual fade levels
+refusing the view, the warp choice and the merchants' menus in the original
+layout) were fixed, each with regression tests built from the logged fields.
 
-Second session (414645a): single screen and pointer remapping worked in
-gameplay; the title menus and the pause menu still showed both screens. The
-next change (menus in single screen, View only with a live map, start/load
-hold) passed core 64 groups in an isolated light build (core and the live
-controller only); the full suites and the DLL wait for a machine without the
-game running.
-
-Follow-ups of that session (29/10/2026, branch dev/dawn-menus-map-view, not
-tested in game): directions held or pressed while closing the view reach the
-game and residual fade levels no longer refuse it; the warp room's destination
-choice stays single screen; Dawn's map marker is replayed from its own frames.
-Full offline suites, no game running: core 68 groups (adds the logged warp room
-sequences and Dawn's marker cycle against both titles' limits), WARP with
-`--proxy` 19 (adds: Dawn's identity mode stays frozen without dra01, and a
-title change drops captures and restores the limits), guard 1, Steam pad 10,
-Python 19, installer fixtures 14 with RealGameTouched=false.
-
-Third session (7769e06, installed 29/10/2026): menus, the view, the pulsing
-marker and directions after the view confirmed by the user; the merchants'
-menus still showed both screens. Their follow-up (branch dev/dawn-shops, not
-tested in game): core 69 groups (adds the logged merchant sequences), WARP with
-`--proxy` 19, guard 1, Steam pad 10, Python 19, all built while the game was
-open (no game process touched). The installer fixtures were not run then, to
-stay clear of the running game; the installer scripts are unchanged since
-their last 14/14 run.
+Not validated in game: the warp room's destination choice (static analysis and
+logged fields only), touch in every Dawn menu, Dawn's other game modes, and a
+Portrait session on the v0.2.0 build itself (its code paths are unchanged
+except the marker identity plumbing).
