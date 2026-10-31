@@ -26,6 +26,7 @@ struct Panel {
 };
 struct State {
     Settings settings{};
+    Title title = Title::PortraitOfRuin; // whose identity and limits are followed
     std::wstring directory;
     Log log = nullptr;
     bool configured = false, following = false;
@@ -78,7 +79,7 @@ void end_map(const char* reason, int nextMapPanel = -1, unsigned long long now =
     auto& s = state();
     if (s.mapPanel >= 0) {
         Panel& p = s.panels[s.mapPanel];
-        const auto pos = s.settings.nativeIdentity ? identity::sample(static_cast<unsigned>(s.mapPanel))
+        const auto pos = s.settings.nativeIdentity ? identity::sample(s.title, static_cast<unsigned>(s.mapPanel))
                                                    : identity::Sample{true, 0};
         bool keptAll = s.plan.valid && s.plan.confidence == MarkerCycleConfidence::Complete &&
                        s.plan.count > 0 && p.tracker.generation() == s.plan.generation;
@@ -249,7 +250,7 @@ bool active() noexcept {
 }
 Patch on_present(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* backbuffer,
                  const gfx::SourceRect (&panels)[2], int mapPanel, bool tracking,
-                 const PauseContext& pause) noexcept {
+                 const PauseContext& pause, Title title) noexcept {
     try {
         auto& s = state(); Patch out{};
         if (!active() || !device || !context || !backbuffer) {
@@ -264,6 +265,18 @@ Patch on_present(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Textu
             s.device = device; s.format = desc.Format; s.width = desc.Width; s.height = desc.Height;
             s.regions[0] = panels[0]; s.regions[1] = panels[1];
             if (!tracking) return out;
+        }
+        if (title != s.title) {
+            // Another title's marker: nothing captured or retained carries over.
+            if (s.following) { end_map("title-changed"); reset_all(); }
+            s.title = title;
+            const auto limits = marker_cycle_limits(title);
+            for (auto& p : s.panels) p.tracker.set_limits(limits);
+            char line[96]{};
+            std::snprintf(line, sizeof(line), "marker,title=%s,maxChanged=%u",
+                          title == Title::DawnOfSorrow ? "dawn" : title == Title::PortraitOfRuin ? "portrait" : "none",
+                          limits.maxChanged);
+            emit(line);
         }
         s.following = true;
         const auto now = now_ms();
@@ -299,7 +312,7 @@ Patch on_present(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Textu
         if (s.awaitingUnpause) {
             const int ap = s.awaitingPanel;
             const auto pos = (ap >= 0 && ap < 2 && s.settings.nativeIdentity)
-                                 ? identity::sample(static_cast<unsigned>(ap))
+                                 ? identity::sample(s.title, static_cast<unsigned>(ap))
                                  : identity::Sample{true, 0};
             const char* dropReason = nullptr;
             if (ap < 0 || ap > 1 || s.mapPanel >= 0) dropReason = "invalid-awaiting-state";
@@ -344,7 +357,7 @@ Patch on_present(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Textu
         }
         for (unsigned i = 0; i < 2; ++i) {
             auto& p = s.panels[i];
-            const auto position = s.settings.nativeIdentity ? identity::sample(i) : identity::Sample{true, 0};
+            const auto position = s.settings.nativeIdentity ? identity::sample(s.title, i) : identity::Sample{true, 0};
             p.currentIdentity = position.epoch;
             if (!position.available) {
                 if (p.identityAvailable) { p.tracker.reset(); p.probe.invalidate_kept(); p.probe.discard_pending(); observe_readiness(i, p, now); }

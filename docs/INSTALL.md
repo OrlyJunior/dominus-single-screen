@@ -7,6 +7,10 @@ These instructions do not authorize replacing another local installation.
 
 Close the game before installation/removal. Use normal user permissions; the
 scripts do not request elevation, run Steam, restore saves, or kill processes.
+Every `game.exe` is judged by its full image path and file identity: another
+installation such as Castlevania Advance Collection may stay open, while this
+game, a process whose path or identity cannot be read, or a failed process
+enumeration refuses the operation.
 Set `$gameDirectory` to your actual Steam game folder and `$packageDirectory` to
 a separate directory containing your built `d3d11.dll` and the release INI.
 
@@ -24,7 +28,10 @@ an integrity manifest. On failure it removes only unchanged files it created.
 It does not alter original executable/DLL/data files or user progress.
 
 Launch normally from Steam only when you choose to play. Use Portrait of Ruin,
-the supported layout and View + Y to activate. Other titles remain unsupported.
+the supported layout and View + Y to activate. Experimental Dawn of Sorrow
+support is on in the release INI; set `EnableExperimentalDawn=0` there before
+installing to leave Dawn untouched.
+Other titles remain unsupported.
 
 To remove a script-installed mod, with the game closed:
 

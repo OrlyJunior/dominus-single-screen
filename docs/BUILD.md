@@ -29,8 +29,10 @@ python -B -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 Synthetic installer tests create retained fixtures under `out/installer-tests`,
-never in a Steam installation. They may refuse if a process named game.exe is
-running; that is a safety refusal, not permission to close someone else's game.
+never in a Steam installation. Install/removal refuse while this game, or a
+game.exe that cannot be identified by its full image path, is running; that is
+a safety refusal, not permission to close someone else's game. Another
+installation (e.g. Castlevania Advance Collection) may stay open.
 
 The D3D11 WARP test uses only its own hidden windows, textures and synthetic
 process. Run against a separately built DLL:
@@ -74,7 +76,7 @@ only synthetic tests; it neither installs nor starts a game.
 ## Optional local package
 
 Only after building, a private package can be prepared with
-`scripts/Package-Release.ps1 -BuildDirectory $buildDirectory -OutputDirectory $packageOutput -Version 0.1.1`.
+`scripts/Package-Release.ps1 -BuildDirectory $buildDirectory -OutputDirectory $packageOutput -Version 0.2.0`.
 It creates files only at the requested output and refuses an existing package.
 Do not commit the resulting binary/archive. Package creation is not publishing a
 GitHub Release and does not install it. Preserve all included license notices.

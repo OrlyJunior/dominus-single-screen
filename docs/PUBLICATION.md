@@ -55,3 +55,14 @@ SRC-SHA256.json now lists the v0.1.1 runtime/header/test sources. The repository
 is public: the same exclusions apply (no compiled artifacts, game files, saves,
 logs, dumps, local handoffs, machine paths or account identifiers). Runtime
 fingerprints and native addresses are expected technical data.
+
+## v0.2.0
+
+Prepared on a release branch from the development history (linear on top of
+v0.1.1, no merge commits); the unrelated study branch is not part of it. Added:
+the Dawn of Sorrow profile, scene rules, position identity and pointer remap
+(pointer_remap sources/header), their synthetic tests, DAWN-OF-SORROW.md and the
+release documentation. SRC-SHA256.json lists the v0.2.0 runtime/header/test
+sources. DAWN-OF-SORROW.md keeps mechanics only (no story, area, enemy or item
+names) and summarizes the author's in-game sessions without logs, saves, paths
+or account data. The same exclusions and pre-push scans apply.

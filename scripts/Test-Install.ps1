@@ -145,5 +145,44 @@ Uninstall-DssFixture $f
 Assert-DssTest ([IO.File]::ReadAllText($foreign) -ceq 'NOT-OWNED-BY-MOD') 'Uninstaller touched an unrelated file.'
 $passed.Add('Unrelated files survive removal unchanged')
 
+$f = New-DssFixture 'process-identity'
+$target = Join-Path $f.Game 'game.exe'
+$other = Join-Path $f.Root 'other-collection\game.exe'
+[void][IO.Directory]::CreateDirectory((Split-Path -Parent $other))
+Write-DssNewFile $other ([Text.Encoding]::ASCII.GetBytes('ANOTHER-INSTALLATION'))
+$link = Join-Path $f.Root 'other-collection\linked-game.exe'
+New-Item -ItemType HardLink -Path $link -Target $target | Out-Null
+$targetId = Get-DssFileIdentity $target
+Assert-DssTest ($targetId -and (Get-DssFileIdentity $other) -and $targetId -cne (Get-DssFileIdentity $other)) 'Distinct files must have distinct identities.'
+Assert-DssTest ((Get-DssFileIdentity $link) -ceq $targetId) 'A hard link must share the identity of its file.'
+Assert-DssTest (-not (Get-DssFileIdentity (Join-Path $f.Root 'missing.exe'))) 'A missing file has no identity.'
+$passed.Add('File identity tells another installation from the same file under another path')
+
+function New-DssRecord([int]$Id, [string]$Path) { [pscustomobject]@{ Id = $Id; Path = $Path; Identity = (Get-DssFileIdentity $Path) } }
+$block = { param($records, $root, $id) @(Get-DssProcessBlockers $records $root $id) }
+Assert-DssTest (@(& $block @() $f.Game $targetId).Count -eq 0) 'No process must not block.'
+Assert-DssTest (@(& $block @((New-DssRecord 1 $other)) $f.Game $targetId).Count -eq 0) 'Another identified installation must be allowed.'
+Assert-DssTest (@(& $block @((New-DssRecord 2 $target.ToUpperInvariant())) $f.Game $targetId)[0] -match 'this game is running') 'The target game must block, whatever the case.'
+Assert-DssTest (@(& $block @([pscustomobject]@{ Id = 3; Path = $null; Identity = $null }) $f.Game $targetId)[0] -match 'unavailable or inconsistent') 'An unidentified process must block.'
+Assert-DssTest (@(& $block @((New-DssRecord 4 $link)) $f.Game $targetId)[0] -match 'same file') 'The same file through a hard link must block.'
+Assert-DssTest (@(& $block @([pscustomobject]@{ Id = 5; Path = $other; Identity = $null }) $f.Game $targetId)[0] -match 'identity unavailable') 'An unreadable identity must block.'
+Assert-DssTest (@(& $block @((New-DssRecord 6 $other)) $f.Game $null)[0] -match 'identity unavailable') 'An unreadable target identity must block.'
+Assert-DssTest (@(& $block @((New-DssRecord 7 (Join-Path $f.Game 'windata\game.exe'))) $f.Game $targetId)[0] -match 'this game directory') 'Any image inside the game directory must block.'
+Assert-DssTest (@(& $block @((New-DssRecord 8 $other)) $null $null)[0] -match 'is running') 'Without a game directory any game.exe must block (v0.1.1 rule).'
+$mixed = @((New-DssRecord 9 $other), [pscustomobject]@{ Id = 10; Path = $null; Identity = $null })
+Assert-DssTest (@(& $block $mixed $f.Game $targetId).Count -eq 1) 'One unidentified process among allowed ones must still block.'
+Assert-DssTest ((Merge-DssProcessPath $other $other.ToUpperInvariant()) -ieq $other) 'Agreeing reports must merge.'
+Assert-DssTest (-not (Merge-DssProcessPath $other $target)) 'Disagreeing reports must be unidentified.'
+Assert-DssTest (-not (Merge-DssProcessPath $null $null)) 'No report must be unidentified.'
+Assert-DssTest ((Merge-DssProcessPath $null $other) -ieq $other) 'A single report is used.'
+$passed.Add('Process check allows only an unambiguous other installation')
+
+# The running system (any open Castlevania Advance Collection included) is
+# only enumerated and judged against a synthetic target; nothing is touched.
+$live = @(Get-DssGameProcessRecords $target)
+$liveBlockers = @(Get-DssProcessBlockers $live $f.Game $targetId)
+$liveSummary = @($live | ForEach-Object { "pid $($_.Id): $($_.Path)" })
+$passed.Add('Live enumeration judged against a synthetic target')
+
 # Tests retain their small synthetic fixtures for inspection; no recursive deletion is used.
-[pscustomobject]@{ Result = 'PASS'; Tests = $passed.Count; Cases = $passed.ToArray(); FixtureDirectory = $testRoot; RealGameTouched = $false; LaunchedGame = $false }
+[pscustomobject]@{ Result = 'PASS'; Tests = $passed.Count; Cases = $passed.ToArray(); FixtureDirectory = $testRoot; RealGameTouched = $false; LaunchedGame = $false; LiveGameProcesses = $liveSummary; LiveBlockersForFixture = $liveBlockers }

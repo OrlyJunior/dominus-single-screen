@@ -42,12 +42,14 @@ of voluntary close, pending/confirmed release, task, lease and connection epochs
 
 MarkerCycleTracker keeps up to 16 real images and ordered occurrences, with
 separate holds for repeated images. It can recognize two matching general cycles.
-The Portrait-specific optimization recognizes a measured39-tick lap, or the first
+The Portrait-specific optimization recognizes a measured 39-tick lap, or the first
 return to the initial state with the initial hold complemented from the validated
 39-tick native period, under minimum state-count, difference and hold bounds.
 This inference is specific to the observed Portrait profile, not proof of another
-animation's period. Sampling gaps, timing changes, new images and identities reset
-confidence. An incomplete or uncertain sequence stays frozen.
+animation's period; Dawn's marker was shown statically to use the same counter
+and formula (experimental; marker_cycle_limits keeps every limit but its larger
+sprite's changed-pixel bound). Sampling gaps, timing changes, new images and
+identities reset confidence. An incomplete or uncertain sequence stays frozen.
 
 PanelProbe asynchronously captures native pixels plus timestamps/position epochs,
 retains GPU images, then prepares small patches of the changed union plus a guard
@@ -61,17 +63,34 @@ is pending do not train timings. Invalid identity/context/resource events discar
 retention. This avoids both stale positions and the extra paused frame corrupting
 a measured run after map closure.
 
-The read-only Portrait position provider validates dra02.dll's SHA/PE and reads
-bounded player-handle pools, area/room and quantized coordinates twice. Position
+The read-only position provider validates the verified title's DLL (dra02.dll
+for Portrait; dra01.dll for Dawn, experimental) by SHA/PE and reads bounded
+player-handle pools, area/room and quantized coordinates twice; the marker
+module drops every capture when the title changes. Position
 changes invalidate even visually identical collapsed-marker frames. A coherent
 read is not an atomic association with the GPU/GameThread; freshness, matching
 frozen pixels and cycle gates remain necessary. No game function is called and
 no game state is written by this provider.
 
+## Title profiles (development branch)
+
+One decision point per title, the rest shared. title_identity verifies a title
+from an enabled set (Portrait by default; Dawn only with the experimental INI
+switch) and reads that title's own scene fields; core classifies them
+(classify_portrait_scene, classify_dawn_scene) and TitleGate gates them. The
+differences live in core's AdaptationProfile data: layout rectangles, how the
+map panel is found (Portrait: pixels; Dawn: native page), whether the main
+screen is shown alone in every verified scene (Portrait) or only where the
+scene allows it (Dawn, original layout elsewhere), LB/RB page navigation
+(PageButtonFilter), marker replay (Portrait; Dawn experimental) and pointer
+remapping (pointer_remap, Dawn only). A title without a profile stays inert. See
+[DAWN-OF-SORROW.md](DAWN-OF-SORROW.md).
+
 ## Ownership and extension boundaries
 
 Runtime code is split among core, graphics, input_observer, native_runtime,
-live_controller, marker_blink, marker_identity and title_identity. render_capture and
+live_controller, marker_blink, marker_identity, title_identity and pointer_remap.
+render_capture and
 resource_observer are optional diagnostics, not requirements for normal playback.
 The RenderDoc adapter has its own opt-in/version/path checks and ships no tool DLL.
 

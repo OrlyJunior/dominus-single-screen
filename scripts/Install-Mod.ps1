@@ -10,8 +10,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Verify-Game.ps1') -Library
 if ($TestFailAfterCopy -and -not $TestFixtureRoot) { throw 'Failure injection is restricted to synthetic fixtures.' }
-Assert-DssNoGameProcess
+# Read-only checks first: the process check needs this game's directory.
 $root = Assert-DssGame $GameDirectory $TestFixtureRoot
+Assert-DssNoGameProcess $root
 $package = Get-DssFullPath $PackageDirectory
 Assert-DssNoReparse $package
 if (-not (Test-Path -LiteralPath $package -PathType Container)) { throw 'PackageDirectory does not exist.' }
@@ -34,12 +35,12 @@ if (-not $TestFixtureRoot) {
     if ([BitConverter]::ToUInt32($dllBytes, $pe) -ne 0x4550 -or [BitConverter]::ToUInt16($dllBytes, $pe + 4) -ne 0x8664 -or [BitConverter]::ToUInt16($dllBytes, $pe + 24) -ne 0x20B -or ([BitConverter]::ToUInt16($dllBytes, $pe + 22) -band 0x2000) -eq 0) { throw 'Payload must be a valid x64 PE32+ DLL.' }
 }
 $before = @(Get-DssOriginalSnapshot $root)
-Assert-DssNoGameProcess
+Assert-DssNoGameProcess $root
 $created = [Collections.Generic.List[object]]::new()
 try {
     $copied = 0
     foreach ($file in $payload) {
-        Assert-DssNoGameProcess
+        Assert-DssNoGameProcess $root
         $source = Join-Path $package $file.Name
         if ((Get-DssHash $source) -cne $file.SHA256) { throw 'Package changed while preparing installation.' }
         $temporary = Join-Path $root ('.dominus-single-screen.' + [Guid]::NewGuid().ToString('N') + '.tmp')
@@ -64,7 +65,7 @@ try {
         if ($TestFailAfterCopy -eq $copied) { throw 'Synthetic failure after payload copy.' }
     }
     Assert-DssSnapshot $before @(Get-DssOriginalSnapshot $root)
-    Assert-DssNoGameProcess
+    Assert-DssNoGameProcess $root
     $manifest = [ordered]@{ Schema = 1; Mod = 'dominus-single-screen'; GameDirectory = $root; SyntheticFixture = [bool]$TestFixtureRoot; CreatedUtc = [DateTime]::UtcNow.ToString('o'); ExpectedGameExeSHA256 = Get-DssHash (Join-Path $root 'game.exe'); InstalledFiles = $payload; Originals = $before }
     $manifestPath = Join-Path $root $script:DssManifestName
     $json = $manifest | ConvertTo-Json -Depth 8
@@ -90,7 +91,7 @@ try {
     $reason = $_
     $remaining = [Collections.Generic.List[string]]::new()
     $rollbackAllowed = $true
-    try { Assert-DssNoGameProcess } catch { $rollbackAllowed = $false }
+    try { Assert-DssNoGameProcess $root } catch { $rollbackAllowed = $false }
     for ($i = $created.Count - 1; $i -ge 0; $i--) {
         $file = $created[$i]
         try {
